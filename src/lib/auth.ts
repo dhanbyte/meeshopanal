@@ -83,30 +83,44 @@ export function useAuth() {
   const [state, setState] = useState<AuthState>({ user: null, profile: null, loading: true, error: "" });
 
   useEffect(() => {
-    const localSession = getLocalSession();
-    if (localSession) {
-      setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
-      return undefined;
-    }
-
     if (supabase) {
       let active = true;
       void supabase.auth.getSession().then(({ data: { session } }) => {
-        if (!session || !active) return;
+        if (!session || !active) {
+          const localSession = getLocalSession();
+          if (localSession) {
+            setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
+          } else {
+            setState({ user: null, profile: null, loading: false, error: "" });
+          }
+          return;
+        }
         const user = session.user;
         const profile = buildSupabaseProfile(user);
+        clearLocalSession();
         setState({ user: buildSupabaseUser(user), profile, loading: false, error: "" });
       }).catch(() => {
         if (!active) return;
+        const localSession = getLocalSession();
+        if (localSession) {
+          setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
+          return;
+        }
         setState({ user: null, profile: null, loading: false, error: "Supabase session could not be loaded." });
       });
 
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (!session) {
+          const localSession = getLocalSession();
+          if (localSession) {
+            setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
+            return;
+          }
           setState({ user: null, profile: null, loading: false, error: "" });
           return;
         }
         const profile = buildSupabaseProfile(session.user);
+        clearLocalSession();
         setState({ user: buildSupabaseUser(session.user), profile, loading: false, error: "" });
       });
 
@@ -114,6 +128,12 @@ export function useAuth() {
         active = false;
         subscription.unsubscribe();
       };
+    }
+
+    const localSession = getLocalSession();
+    if (localSession) {
+      setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
+      return undefined;
     }
 
     const currentAuth = auth;
@@ -178,7 +198,7 @@ export function useAuth() {
         if (error) throw error;
         const user = data.user;
         const profile = buildSupabaseProfile(user);
-        setLocalSession(normalizedEmail, profile);
+        clearLocalSession();
         setState({ user: buildSupabaseUser(user), profile, loading: false, error: "" });
         return;
       } catch (error) {
