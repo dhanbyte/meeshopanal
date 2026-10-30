@@ -51,6 +51,7 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
   const [busyShipmentId, setBusyShipmentId] = useState("");
   const dailyRequestId = useRef(0);
   const canManage = !demoMode && (profile.role === "admin" || profile.role === "staff");
+  const canDeleteOwnOrders = !demoMode && profile.role === "client";
   const canUpload = canManage || demoMode;
   const canAdmin = !demoMode && profile.role === "admin";
   const nav = profile.role === "client" ? navItems.filter((item) => item.id !== "clients") : navItems;
@@ -151,6 +152,10 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
   }
 
   async function handleDeleteShipment(shipment: Shipment) {
+    if (profile.role === "client" && shipment.clientId !== profile.clientId) {
+      setError("You can only delete your own orders.");
+      return;
+    }
     try {
       const clientName = data.clients.find((client) => client.id === shipment.clientId)?.name ?? "this client";
       const confirmed = window.confirm(`Delete this order for ${clientName} and remove its linked ledger/return records?`);
@@ -219,7 +224,7 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
   function pageContent() {
     if (loading) return <div className="loading-panel"><span className="loader-mark" /><span>Loading your latest records…</span></div>;
     if (page === "dashboard") return <DashboardPage clients={data.clients} balances={data.balances} shipments={data.shipments} returns={data.returns} ledgerEntries={data.ledgerEntries} dailyActivity={demoMode ? undefined : dailyActivity} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} onGoOrders={() => navigate("orders")} />;
-    if (page === "orders") return <OrdersPage shipments={data.shipments} clients={data.clients} canManage={canManage} canUpload={canUpload} search={search} onSearch={setSearch} onUpload={() => setUploadOpen(true)} onStatusChange={(id, status) => void handleStatusChange(id, status)} onEdit={setEditingShipment} onDelete={canManage ? handleDeleteShipment : undefined} busyId={busyShipmentId} />;
+    if (page === "orders") return <OrdersPage shipments={data.shipments} clients={data.clients} canManage={canManage} canUpload={canUpload} search={search} onSearch={setSearch} onUpload={() => setUploadOpen(true)} onStatusChange={(id, status) => void handleStatusChange(id, status)} onEdit={setEditingShipment} onDelete={canManage || canDeleteOwnOrders ? handleDeleteShipment : undefined} busyId={busyShipmentId} />;
     if (page === "returns") return <ReturnsPage returns={data.returns} clients={data.clients} canManage={canManage} profileRole={profile.role} onAdd={() => setReturnOpen(true)} onView={(record, fileIndex) => setSelectedEvidence({ returnId: record.id, file: record.evidence[fileIndex] })} onShare={(record) => void handleShare(record)} onClaimUpdate={(id, status) => void handleClaimUpdate(id, status)} />;
     if (page === "clients") return <ClientsPage clients={data.clients} balances={data.balances} shipments={data.shipments} ledgerEntries={data.ledgerEntries} canAdd={canAdmin} canRecordPayment={canAdmin} onAdd={() => setClientOpen(true)} onRecordPayment={openClientPayment} onEditClient={setEditingClient} onManageLogin={setLoginClient} />;
     return <LedgerPage clients={data.clients} balances={data.balances} shipments={data.shipments} entries={data.ledgerEntries} dailyEntries={demoMode ? undefined : dailyActivity.ledgerEntries} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} canAdd={canManage} onAdd={openLedgerEntry} onDelete={canManage ? handleDeleteLedgerEntry : undefined} />;
