@@ -8,19 +8,47 @@ type LocalClientLogin = {
   uid: string;
   clientId: string;
   email: string;
-  password: string;
   role: "client";
   active: boolean;
   name?: string;
 };
+
+function sanitizeLocalClientLogins(input: unknown): Record<string, LocalClientLogin> {
+  if (!input || typeof input !== "object") return {};
+
+  const cleaned: Record<string, LocalClientLogin> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+
+    const candidate = value as Record<string, unknown>;
+    const { password: _password, ...rest } = candidate;
+    const login = rest as Partial<LocalClientLogin>;
+    if (!login.uid || !login.clientId || !login.email) continue;
+
+    cleaned[key] = {
+      uid: String(login.uid),
+      clientId: String(login.clientId),
+      email: String(login.email),
+      role: "client",
+      active: login.active !== false,
+      ...(login.name ? { name: String(login.name) } : {}),
+    };
+  }
+
+  return cleaned;
+}
 
 function readLocalClientLogins(): Record<string, LocalClientLogin> {
   if (typeof window === "undefined") return {};
   try {
     const raw = window.localStorage.getItem(LOCAL_CLIENT_LOGIN_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, LocalClientLogin>;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    const parsed = JSON.parse(raw);
+    const sanitized = sanitizeLocalClientLogins(parsed);
+    if (JSON.stringify(sanitized) !== raw) {
+      writeLocalClientLogins(sanitized);
+    }
+    return sanitized;
   } catch {
     return {};
   }
@@ -31,12 +59,13 @@ function writeLocalClientLogins(logins: Record<string, LocalClientLogin>) {
   window.localStorage.setItem(LOCAL_CLIENT_LOGIN_KEY, JSON.stringify(logins));
 }
 
-export function getLocalClientLogin(email: string, password: string) {
+export function getLocalClientLogin(email: string, _password: string) {
   const key = email.trim().toLowerCase();
   const logins = readLocalClientLogins();
   const login = logins[key];
-  if (!login || login.password !== password) return null;
-  return login;
+  if (!login) return null;
+  // Passwords are never stored locally for client logins.
+  return null;
 }
 
 function extractErrorCode(issue: unknown) {
@@ -55,7 +84,6 @@ export async function saveClientLogin(clientId: string, email: string, password:
       uid,
       clientId,
       email: normalizedEmail,
-      password,
       role: "client",
       active: true,
     };

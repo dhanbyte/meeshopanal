@@ -2,7 +2,6 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } fr
 import { doc, getDoc } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { auth, db } from "./firebase";
-import { getLocalClientLogin } from "./clientLogin";
 import { supabase } from "./supabase";
 import type { UserProfile } from "./types";
 
@@ -201,20 +200,6 @@ export function useAuth() {
       return;
     }
 
-    const localLogin = getLocalClientLogin(normalizedEmail, password);
-    if (localLogin) {
-      const profile: UserProfile = {
-        uid: localLogin.uid,
-        name: localLogin.email,
-        role: "client",
-        active: localLogin.active,
-        clientId: localLogin.clientId,
-      };
-      setLocalSession(normalizedEmail, profile);
-      setState({ user: buildLocalUser(normalizedEmail, profile), profile, loading: false, error: "" });
-      return;
-    }
-
     if (supabase) {
       try {
         const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
@@ -251,13 +236,13 @@ export function useAuth() {
       } catch (error) {
         const readable = getReadableError(error);
         if (/Email or password does not match/i.test(readable)) {
-          throw new Error("Email or password does not match an active account or saved local login.");
+          throw new Error("Email or password does not match an active account.");
         }
         throw new Error(readable);
       }
     }
 
-    throw new Error("Email or password does not match an active account or saved local login.");
+    throw new Error("Email or password does not match an active account.");
   }
 
   async function logout() {
@@ -277,7 +262,7 @@ export function getReadableError(error: unknown) {
   const rawMessage = error instanceof Error ? error.message : String(error ?? "");
 
   if (["auth/invalid-credential", "auth/user-not-found", "auth/wrong-password"].includes(code)) {
-    return "Email or password does not match an active Firebase account or saved local login.";
+    return "Email or password does not match an active account.";
   }
   if (["functions/internal", "internal", "internal [0]"].includes(code) || /internal\s*\[0\]|functions\/internal/i.test(rawMessage)) {
     return "The Firebase backend is not ready for this login action. Use the local fallback or finish the Cloud Function setup.";
