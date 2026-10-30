@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { Activity, Bell, ChevronDown, CircleUserRound, LayoutDashboard, LogOut, Menu, PackageCheck, PackageOpen, RefreshCw, RotateCcw, Search, ShieldCheck, UsersRound, WalletCards, X } from "lucide-react";
-import { clientPendingAmount, deleteLedgerEntry, loadDailyActivity, loadWorkspace, normalizeAwb, updateReturnRecord, updateShipmentStatus } from "../lib/data";
+import { clientPendingAmount, deleteLedgerEntry, deleteShipment, loadDailyActivity, loadWorkspace, normalizeAwb, updateReturnRecord, updateShipmentStatus } from "../lib/data";
 import { demoWorkspaceData } from "../lib/demoData";
 import type { Client, LedgerEntry, ProductPriceDefault, ReturnRecord, Shipment, UserProfile, WorkspaceData, EvidenceFile } from "../lib/types";
 import { AddClientModal, ClientLoginModal, EditClientModal, EditShipmentModal, LedgerModal, MediaViewer, ReturnModal } from "./OperationModals";
@@ -150,6 +150,20 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
     }
   }
 
+  async function handleDeleteShipment(shipment: Shipment) {
+    try {
+      const clientName = data.clients.find((client) => client.id === shipment.clientId)?.name ?? "this client";
+      const confirmed = window.confirm(`Delete this order for ${clientName} and remove its linked ledger/return records?`);
+      if (!confirmed) return;
+      await deleteShipment(shipment.id);
+      await refresh(true);
+      await refreshDaily(selectedDate);
+      showNotice("Order removed.");
+    } catch (issue) {
+      setError(issue instanceof Error ? issue.message : "Order could not be removed.");
+    }
+  }
+
   async function handleShipmentSaved(shipment?: Shipment) {
     if (demoMode && shipment) {
       const key = normalizeAwb(shipment.awb);
@@ -205,7 +219,7 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
   function pageContent() {
     if (loading) return <div className="loading-panel"><span className="loader-mark" /><span>Loading your latest records…</span></div>;
     if (page === "dashboard") return <DashboardPage clients={data.clients} balances={data.balances} shipments={data.shipments} returns={data.returns} ledgerEntries={data.ledgerEntries} dailyActivity={demoMode ? undefined : dailyActivity} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} onGoOrders={() => navigate("orders")} />;
-    if (page === "orders") return <OrdersPage shipments={data.shipments} clients={data.clients} canManage={canManage} canUpload={canUpload} search={search} onSearch={setSearch} onUpload={() => setUploadOpen(true)} onStatusChange={(id, status) => void handleStatusChange(id, status)} onEdit={setEditingShipment} busyId={busyShipmentId} />;
+    if (page === "orders") return <OrdersPage shipments={data.shipments} clients={data.clients} canManage={canManage} canUpload={canUpload} search={search} onSearch={setSearch} onUpload={() => setUploadOpen(true)} onStatusChange={(id, status) => void handleStatusChange(id, status)} onEdit={setEditingShipment} onDelete={canManage ? handleDeleteShipment : undefined} busyId={busyShipmentId} />;
     if (page === "returns") return <ReturnsPage returns={data.returns} clients={data.clients} canManage={canManage} profileRole={profile.role} onAdd={() => setReturnOpen(true)} onView={(record, fileIndex) => setSelectedEvidence({ returnId: record.id, file: record.evidence[fileIndex] })} onShare={(record) => void handleShare(record)} onClaimUpdate={(id, status) => void handleClaimUpdate(id, status)} />;
     if (page === "clients") return <ClientsPage clients={data.clients} balances={data.balances} shipments={data.shipments} ledgerEntries={data.ledgerEntries} canAdd={canAdmin} canRecordPayment={canAdmin} onAdd={() => setClientOpen(true)} onRecordPayment={openClientPayment} onEditClient={setEditingClient} onManageLogin={setLoginClient} />;
     return <LedgerPage clients={data.clients} balances={data.balances} shipments={data.shipments} entries={data.ledgerEntries} dailyEntries={demoMode ? undefined : dailyActivity.ledgerEntries} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} canAdd={canManage} onAdd={openLedgerEntry} onDelete={canManage ? handleDeleteLedgerEntry : undefined} />;

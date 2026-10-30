@@ -207,6 +207,45 @@ export async function deleteLedgerEntrySupabase(id: string) {
   if (deleteError) throw deleteError;
 }
 
+export async function deleteShipmentSupabase(id: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+
+  const { data: shipmentData, error: shipmentReadError } = await supabase.from("shipments").select("*").eq("id", id).maybeSingle();
+  if (shipmentReadError) throw shipmentReadError;
+  if (!shipmentData) return;
+
+  const shipment = camelizeKeys(shipmentData) as Shipment;
+  const { data: linkedEntries, error: linkedEntryError } = await supabase.from("ledger_entries").select("*").eq("shipment_id", id);
+  if (linkedEntryError) throw linkedEntryError;
+
+  const entries = (linkedEntries ?? []).map((entry) => camelizeKeys(entry) as LedgerEntry);
+  const balanceResult = await supabase.from("client_balances").select("*").eq("client_id", shipment.clientId).maybeSingle();
+  if (balanceResult.error) throw balanceResult.error;
+
+  const currentBalance = balanceResult.data ? (camelizeKeys(balanceResult.data) as ClientBalance) : { clientId: shipment.clientId, payable: 0, receivable: 0, cash: 0 };
+  const receivableReduction = entries.reduce((sum, entry) => sum + Number(entry.receivableDelta ?? 0), 0);
+  const payableReduction = entries.reduce((sum, entry) => sum + Number(entry.payableDelta ?? 0), 0);
+  const cashReduction = entries.reduce((sum, entry) => sum + Number(entry.cashDelta ?? 0), 0);
+
+  const { error: balanceUpdateError } = await supabase.from("client_balances").upsert({
+    client_id: shipment.clientId,
+    payable: Number(currentBalance.payable ?? 0) - payableReduction,
+    receivable: Number(currentBalance.receivable ?? 0) - receivableReduction,
+    cash: Number(currentBalance.cash ?? 0) - cashReduction,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "client_id" });
+  if (balanceUpdateError) throw balanceUpdateError;
+
+  const { error: returnDeleteError } = await supabase.from("returns").delete().eq("shipment_id", id);
+  if (returnDeleteError) throw returnDeleteError;
+
+  const { error: ledgerDeleteError } = await supabase.from("ledger_entries").delete().eq("shipment_id", id);
+  if (ledgerDeleteError) throw ledgerDeleteError;
+
+  const { error: shipmentDeleteError } = await supabase.from("shipments").delete().eq("id", id);
+  if (shipmentDeleteError) throw shipmentDeleteError;
+}
+
 export async function updateReturnRecordSupabase(id: string, patch: Partial<ReturnRecord>) {
   if (!supabase) throw new Error("Supabase is not configured.");
   const { error } = await supabase.from("returns").update(toSupabaseRow(patch as Record<string, unknown>)).eq("id", id);

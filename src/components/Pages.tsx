@@ -79,7 +79,7 @@ export function DashboardPage({ clients, balances, shipments, returns, ledgerEnt
   </div>;
 }
 
-export function OrdersPage({ shipments, clients, canManage, canUpload = canManage, search, onSearch, onUpload, onStatusChange, onEdit, busyId }: {
+export function OrdersPage({ shipments, clients, canManage, canUpload = canManage, search, onSearch, onUpload, onStatusChange, onEdit, onDelete, busyId }: {
   shipments: Shipment[];
   clients: Client[];
   canManage: boolean;
@@ -89,6 +89,7 @@ export function OrdersPage({ shipments, clients, canManage, canUpload = canManag
   onUpload: () => void;
   onStatusChange: (id: string, status: Shipment["status"]) => void;
   onEdit: (shipment: Shipment) => void;
+  onDelete?: (shipment: Shipment) => void;
   busyId: string;
 }) {
   const [statusFilter, setStatusFilter] = useState("all");
@@ -117,7 +118,7 @@ export function OrdersPage({ shipments, clients, canManage, canUpload = canManag
             <td>{formatMoney(shipment.invoiceTotal)}</td>
             <td>{canManage ? <select className={`status-select status-${shipment.status}`} value={shipment.status} disabled={busyId === shipment.id} onChange={(event) => onStatusChange(shipment.id, event.target.value as Shipment["status"])} aria-label={`Change status for ${shipment.orderNumber}`}>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <StatusPill status={shipment.status} />}</td>
             <td>{formatDate(shipment.createdAt)}</td>
-            <td>{canManage ? <button className="button button-secondary button-small" type="button" onClick={() => onEdit(shipment)}><Pencil size={13} />Edit</button> : "—"}</td>
+            <td>{canManage ? <div className="table-actions-stack"><button className="button button-secondary button-small" type="button" onClick={() => onEdit(shipment)}><Pencil size={13} />Edit</button>{onDelete ? <button className="button button-secondary button-small danger-button" type="button" onClick={() => onDelete(shipment)}><X size={13} />Delete</button> : null}</div> : "—"}</td>
           </tr>;
         })}
         {filtered.length === 0 ? <tr><td colSpan={8}><EmptyState title="No shipments match" text={shipments.length ? "Try another search or status filter." : "Upload a label to create the first shipment."} action={canUpload && shipments.length === 0 ? onUpload : undefined} /></td></tr> : null}

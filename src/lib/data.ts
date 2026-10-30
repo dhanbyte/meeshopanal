@@ -21,7 +21,7 @@ import { deleteObject, getBlob, ref } from "firebase/storage";
 import { deleteImageKitAsset, getImageKitReturnUrl, uploadToImageKit } from "./imagekit";
 import { requireFirebase } from "./firebase";
 import { supabase } from "./supabase";
-import { createClientSupabase, createLedgerEntrySupabase, createReturnRecordSupabase, createShipmentSupabase, deleteLedgerEntrySupabase, loadClientHistorySupabase, loadDailyActivitySupabase, loadWorkspaceSupabase, saveProductPriceDefaultSupabase, updateClientDetailsSupabase, updateReturnRecordSupabase, updateShipmentDetailsSupabase, updateShipmentStatusSupabase } from "./supabaseData";
+import { createClientSupabase, createLedgerEntrySupabase, createReturnRecordSupabase, createShipmentSupabase, deleteLedgerEntrySupabase, deleteShipmentSupabase, loadClientHistorySupabase, loadDailyActivitySupabase, loadWorkspaceSupabase, saveProductPriceDefaultSupabase, updateClientDetailsSupabase, updateReturnRecordSupabase, updateShipmentDetailsSupabase, updateShipmentStatusSupabase } from "./supabaseData";
 import type { Client, ClientBalance, EvidenceFile, LedgerEntry, ProductPriceDefault, ReturnRecord, Shipment, ShipmentItem, UserProfile, WorkspaceData } from "./types";
 
 const PAGE_LIMIT = 500;
@@ -731,6 +731,47 @@ export async function deleteLedgerEntry(id: string) {
       updatedAt: serverTimestamp(),
     });
     transaction.delete(entryRef);
+  });
+}
+
+export async function deleteShipment(id: string) {
+  if (supabase) {
+    try {
+      await deleteShipmentSupabase(id);
+      return;
+    } catch (error) {
+      console.warn("Supabase deleteShipment failed; falling back to Firestore.", error);
+    }
+  }
+
+  const { db } = requireFirebase();
+  const shipmentRef = doc(db, "shipments", id);
+  const shipmentSnapshot = await getDoc(shipmentRef);
+  if (!shipmentSnapshot.exists()) return;
+
+  const shipment = { id, ...shipmentSnapshot.data() } as Shipment;
+  const balanceRef = doc(db, "clientBalances", shipment.clientId);
+  const relatedEntries = await getDocs(query(collection(db, "ledgerEntries"), where("shipmentId", "==", id)));
+  const relatedReturns = await getDocs(query(collection(db, "returns"), where("shipmentId", "==", id)));
+  const receivableReduction = relatedEntries.docs.reduce((sum, item) => sum + Number(item.data().receivableDelta ?? 0), 0);
+  const payableReduction = relatedEntries.docs.reduce((sum, item) => sum + Number(item.data().payableDelta ?? 0), 0);
+  const cashReduction = relatedEntries.docs.reduce((sum, item) => sum + Number(item.data().cashDelta ?? 0), 0);
+
+  await runTransaction(db, async (transaction) => {
+    const balanceSnapshot = await transaction.get(balanceRef);
+    const balance = balanceSnapshot.exists() ? balanceSnapshot.data() : { payable: 0, receivable: 0, cash: 0 };
+    transaction.set(balanceRef, {
+      clientId: shipment.clientId,
+      payable: Number(balance.payable ?? 0) - payableReduction,
+      receivable: Number(balance.receivable ?? 0) - receivableReduction,
+      cash: Number(balance.cash ?? 0) - cashReduction,
+      createdAt: balance.createdAt ?? serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    for (const entryDoc of relatedEntries.docs) transaction.delete(entryDoc.ref);
+    for (const returnDoc of relatedReturns.docs) transaction.delete(returnDoc.ref);
+    transaction.delete(shipmentRef);
   });
 }
 
