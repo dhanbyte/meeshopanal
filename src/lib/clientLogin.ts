@@ -1,5 +1,6 @@
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { app } from "./firebase";
+import { supabase } from "./supabase";
 
 const LOCAL_CLIENT_LOGIN_KEY = "parcelDeskLocalClientLogins";
 
@@ -62,6 +63,36 @@ export async function saveClientLogin(clientId: string, email: string, password:
     writeLocalClientLogins(logins);
     return { uid };
   };
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: normalizedEmail,
+        password,
+        options: {
+          data: {
+            clientId,
+            role: "client",
+            name: normalizedEmail,
+          },
+        },
+      });
+
+      if (!error && data?.user) {
+        localFallback();
+        return { uid: data.user.id };
+      }
+      if (error && error.message && /already registered|user already/i.test(error.message)) {
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+        if (!signInError && signInData?.user) {
+          localFallback();
+          return { uid: signInData.user.id };
+        }
+      }
+    } catch {
+      // Fall through to Firebase/local fallback below.
+    }
+  }
 
   if (!app) return localFallback();
 
