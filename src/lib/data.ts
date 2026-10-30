@@ -59,6 +59,92 @@ function shipmentAmount(items: ShipmentItem[] = []) {
   return items.reduce((sum, item) => sum + Math.max(0, Number(item.unitCost) || 0) * Math.max(0, Number(item.quantity) || 0), 0);
 }
 
+function toSupabaseRow<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/\s+/g, "_").toLowerCase(), item])) as Record<string, unknown>;
+}
+
+function toSupabaseIso(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "number") return new Date(value).toISOString();
+  if (typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
+    return (value as { toDate: () => Date }).toDate().toISOString();
+  }
+  return null;
+}
+
+export async function syncLegacyWorkspaceToSupabase(profile: UserProfile): Promise<{ clients: number; balances: number; shipments: number; returns: number; ledgerEntries: number }> {
+  if (!supabase || profile.role !== "admin") {
+    return { clients: 0, balances: 0, shipments: 0, returns: 0, ledgerEntries: 0 };
+  }
+
+  const { db } = requireFirebase();
+  const [clientsSnapshot, balancesSnapshot, shipmentsSnapshot, returnsSnapshot, ledgerSnapshot] = await Promise.all([
+    getDocs(collection(db, "clients")),
+    getDocs(collection(db, "clientBalances")),
+    getDocs(collection(db, "shipments")),
+    getDocs(collection(db, "returns")),
+    getDocs(collection(db, "ledgerEntries")),
+  ]);
+
+  const clients = clientsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })) as Client[];
+  const balances = balancesSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })) as ClientBalance[];
+  const shipments = shipmentsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })) as Shipment[];
+  const returns = returnsSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })) as ReturnRecord[];
+  const ledgerEntries = ledgerSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })) as LedgerEntry[];
+
+  const clientRows = clients.map((row) => ({
+    ...toSupabaseRow(row as unknown as Record<string, unknown>),
+    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
+    updated_at: toSupabaseIso((row as { updatedAt?: unknown }).updatedAt) ?? toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
+  }));
+
+  const balanceRows = balances.map((row) => ({
+    ...toSupabaseRow(row as unknown as Record<string, unknown>),
+    updated_at: toSupabaseIso(row.updatedAt) ?? new Date().toISOString(),
+  }));
+
+  const shipmentRows = shipments.map((row) => ({
+    ...toSupabaseRow(row as unknown as Record<string, unknown>),
+    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
+    updated_at: toSupabaseIso(row.updatedAt) ?? toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
+  }));
+
+  const returnRows = returns.map((row) => ({
+    ...toSupabaseRow(row as unknown as Record<string, unknown>),
+    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
+  }));
+
+  const ledgerRows = ledgerEntries.map((row) => ({
+    ...toSupabaseRow(row as unknown as Record<string, unknown>),
+    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
+  }));
+
+  if (clientRows.length) {
+    const { error } = await supabase.from("clients").upsert(clientRows, { onConflict: "id" });
+    if (error) throw error;
+  }
+  if (balanceRows.length) {
+    const { error } = await supabase.from("client_balances").upsert(balanceRows, { onConflict: "id" });
+    if (error) throw error;
+  }
+  if (shipmentRows.length) {
+    const { error } = await supabase.from("shipments").upsert(shipmentRows, { onConflict: "id" });
+    if (error) throw error;
+  }
+  if (returnRows.length) {
+    const { error } = await supabase.from("returns").upsert(returnRows, { onConflict: "id" });
+    if (error) throw error;
+  }
+  if (ledgerRows.length) {
+    const { error } = await supabase.from("ledger_entries").upsert(ledgerRows, { onConflict: "id" });
+    if (error) throw error;
+  }
+
+  return { clients: clientRows.length, balances: balanceRows.length, shipments: shipmentRows.length, returns: returnRows.length, ledgerEntries: ledgerRows.length };
+}
+
 export function clientPendingAmount(clientId: string, shipments: Shipment[], balances: ClientBalance[]) {
   const postedReceivable = balances.find((balance) => balance.clientId === clientId)?.receivable ?? 0;
   const olderUnpostedShipments = shipments
@@ -193,6 +279,9 @@ async function readProductPriceDefaults(profile: UserProfile): Promise<ProductPr
 export async function loadWorkspace(profile: UserProfile): Promise<WorkspaceData> {
   if (supabase) {
     try {
+      if (profile.role === "admin") {
+        await syncLegacyWorkspaceToSupabase(profile);
+      }
       return await loadWorkspaceSupabase(profile);
     } catch (error) {
       console.warn("Supabase workspace load failed; falling back to Firestore.", error);
