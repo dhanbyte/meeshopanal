@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function activeUser() {
+      return signedIn() && userData().active == true;
+    }
+
+    function isAdmin() {
+      return activeUser() && userData().role == 'admin';
+    }
+
+    function assignedStaff(clientId) {
+      return activeUser() && userData().role == 'staff' && clientId in userData().clientIds;
+    }
+
+    function ownClient(clientId) {
+      return activeUser() && userData().role == 'client' && userData().clientId == clientId;
+    }
+
+    function canReadClient(clientId) {
+      return isAdmin() || assignedStaff(clientId) || ownClient(clientId);
+    }
+
+    function canManageClient(clientId) {
+      return isAdmin() || assignedStaff(clientId);
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /clients/{clientId} {
+      allow read: if canReadClient(clientId);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /shipments/{shipmentId} {
+      allow read: if canReadClient(resource.data.clientId);
+      allow create: if canManageClient(request.resource.data.clientId);
+      allow update: if canManageClient(resource.data.clientId)
+        && request.resource.data.clientId == resource.data.clientId;
+      allow delete: if isAdmin();
+    }
+
+    match /awbIndex/{key} {
+      allow read: if isAdmin() || (activeUser() && userData().role == 'staff');
+      allow create: if activeUser() && (isAdmin() || userData().role == 'staff');
+      allow update, delete: if false;
+    }
+
+    match /returns/{returnId} {
+      allow read: if isAdmin() || assignedStaff(resource.data.clientId)
+        || (ownClient(resource.data.clientId) && resource.data.sharedWithClient == true);
+      allow create: if canManageClient(request.resource.data.clientId);
+      allow update: if canManageClient(resource.data.clientId)
+        && request.resource.data.clientId == resource.data.clientId;
+      allow delete: if isAdmin();
+    }
+
+    match /ledgerEntries/{entryId} {
+      allow read: if canReadClient(resource.data.clientId);
+      allow create: if canManageClient(request.resource.data.clientId);
+      allow update, delete: if false;
+    }
+
+    match /clientBalances/{clientId} {
+      allow read: if canReadClient(clientId);
+      allow create, update: if canManageClient(clientId);
+      allow delete: if false;
+    }
+
+    match /productPriceDefaults/{productId} {
+      allow read, create, update: if isAdmin() || (activeUser() && userData().role == 'staff');
+      allow delete: if isAdmin();
+    }
+
+  }
+}

@@ -1,0 +1,46 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function activeUser() {
+      return signedIn() && userData().active == true;
+    }
+
+    function isAdmin() {
+      return activeUser() && userData().role == 'admin';
+    }
+
+    function assignedStaff(clientId) {
+      return activeUser() && userData().role == 'staff' && clientId in userData().clientIds;
+    }
+
+    function ownClient(clientId) {
+      return activeUser() && userData().role == 'client' && userData().clientId == clientId;
+    }
+
+    match /clients/{clientId}/labels/{shipmentId}/{fileName} {
+      allow read: if isAdmin() || assignedStaff(clientId) || ownClient(clientId);
+      allow write: if (isAdmin() || assignedStaff(clientId))
+        && request.resource != null
+        && request.resource.size < 300 * 1024 * 1024
+        && request.resource.contentType.matches('(image/.*|video/.*|application/pdf)');
+    }
+
+    match /clients/{clientId}/returns/{returnId}/{fileName} {
+      allow read: if isAdmin() || assignedStaff(clientId)
+        || (ownClient(clientId)
+          && firestore.get(/databases/(default)/documents/returns/$(returnId)).data.sharedWithClient == true);
+      allow write: if (isAdmin() || assignedStaff(clientId))
+        && request.resource != null
+        && request.resource.size < 300 * 1024 * 1024
+        && request.resource.contentType.matches('(image/.*|video/.*)');
+    }
+  }
+}
