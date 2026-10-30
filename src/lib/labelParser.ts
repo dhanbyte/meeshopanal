@@ -68,6 +68,36 @@ function normalizeTextForParsing(rawText: string) {
     .trim();
 }
 
+function isMetadataLine(line: string) {
+  return /(?:awb|tracking|waybill|order|invoice|qty|quantity|pieces|total|amount|price|cost|courier|logistics|phone|mobile|address|pincode|city|state|ship\s*to|customer|consignee|name not detected|not detected)/i.test(line);
+}
+
+function extractCustomerCandidate(lines: string[]) {
+  const candidates = lines
+    .map((line) => normalizeLine(line))
+    .filter((line) => line && !isMetadataLine(line) && line.length > 2 && !/^\d+$/.test(line) && !/^[₹$€£]/.test(line))
+    .filter((line) => /[A-Za-z]/.test(line));
+
+  const directName = candidates.find((line) => /^(?:mr|mrs|ms|miss|dr)\b/i.test(line) || /^[A-Z][A-Za-z.\s'-]{2,60}$/.test(line));
+  if (directName) return directName;
+
+  const prose = candidates.find((line) => line.split(/\s+/).length >= 2 && line.split(/\s+/).length <= 6);
+  return prose ?? "";
+}
+
+function extractProductCandidate(lines: string[]) {
+  const candidates = lines
+    .map((line) => normalizeLine(line))
+    .filter((line) => line && !isMetadataLine(line) && line.length > 3 && !/^\d+$/.test(line) && !/^[₹$€£]/.test(line))
+    .filter((line) => /[A-Za-z]/.test(line));
+
+  const goodName = candidates.find((line) => /^[A-Z0-9][A-Za-z0-9 /&()-.]{2,80}$/.test(line) && !/^(?:delivery|pickup|label|shipment)$/i.test(line));
+  if (goodName) return goodName;
+
+  const fallback = candidates.find((line) => line.split(/\s+/).length >= 2 && !/^(?:name|address|phone|mobile)$/i.test(line));
+  return fallback ?? "";
+}
+
 function parseCustomerLines(lines: string[]) {
   const lineText = lines.join("\n");
   const markers = [
@@ -76,7 +106,7 @@ function parseCustomerLines(lines: string[]) {
   ];
   const markerIndex = lines.findIndex((line) => markers.some((pattern) => pattern.test(line)));
   if (markerIndex < 0) {
-    const fallbackName = lines.find((line) => /^(?:Mr|Ms|Mrs|M\.?\s*)?[A-Z][A-Za-z\s.'-]{2,40}$/.test(line) && !/order|awb|tracking|phone|address|pincode|city|state/i.test(line));
+    const fallbackName = extractCustomerCandidate(lines) || lines.find((line) => /^(?:Mr|Ms|Mrs|M\.?\s*)?[A-Z][A-Za-z\s.'-]{2,40}$/.test(line) && !/order|awb|tracking|phone|address|pincode|city|state/i.test(line));
     return { customerName: fallbackName ?? "", customerAddress: lines.slice(0, 3).join(", ") };
   }
 
@@ -146,7 +176,7 @@ export function parseLabelText(text: string): LabelDraft {
     ? lines.slice(descriptionIndex + 1, chargesIndex > descriptionIndex ? chargesIndex : descriptionIndex + 8)
       .filter((line) => line && !/\b(?:HSN|IGST|GST|SKU|Rs\.?\s*\d|Total|Amount|Qty|Quantity|Price)\b/i.test(line))
       .join(" ")
-    : lines.find((line) => !/\b(?:awb|tracking|order|po|customer|phone|address|pincode|city|state|qty|amount|total|courier)\b/i.test(line) && line.length > 3)?.trim() ?? "";
+    : extractProductCandidate(lines) || lines.find((line) => !/\b(?:awb|tracking|order|po|customer|phone|address|pincode|city|state|qty|amount|total|courier)\b/i.test(line) && line.length > 3)?.trim() || "Product not detected";
 
   return {
     ...emptyDraft,
@@ -198,6 +228,8 @@ export function parsePositionedLabel(items: PositionedText[], pageWidth: number,
   const amounts = totalLine.match(/[\d,]+(?:\.\d{1,2})?/g) ?? [];
   const phone = textForParsing.match(/(?:\+?91[\s-]?)?[6-9]\d{9}\b/)?.[0] ?? "";
   const courier = rightLines.map((line) => line.text).join(" ").match(/\b(Valmo|Shadowfax|Delhivery|Ecom\s*Express|XpressBees|Blue\s*Dart|Ekart|BlueDart|DTDC|Dtdc|Amazon|Meesho)\b/i)?.[1] ?? "";
+  const finalProductName = productName || extractProductCandidate(allLines.map((line) => line.text)) || "Product not detected";
+  const finalCustomerName = customer.customerName || extractCustomerCandidate(allLines.map((line) => line.text)) || "Name not detected";
 
   return {
     ...emptyDraft,
@@ -205,10 +237,10 @@ export function parsePositionedLabel(items: PositionedText[], pageWidth: number,
     subOrderNumber,
     awb: trackingNumber(textForParsing),
     courier,
-    customerName: customer.customerName,
+    customerName: finalCustomerName,
     customerAddress: customer.customerAddress,
     customerPhone: phone,
-    productName: productName || (allLines.find((line) => !/\b(?:awb|tracking|order|po|customer|phone|address|pincode|city|state|qty|amount|total|courier)\b/i.test(line.text) && line.text.length > 3)?.text ?? ""),
+    productName: finalProductName,
     sku,
     quantity,
     invoiceTotal: amounts.at(-1)?.replace(/,/g, "") ?? "",
