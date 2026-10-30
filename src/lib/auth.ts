@@ -203,19 +203,28 @@ export function useAuth() {
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Supabase login failed.";
-        if (message.toLowerCase().includes("invalid login credentials") || message.toLowerCase().includes("user not found")) {
-          throw new Error("Email or password does not match an active Supabase account or saved local login.");
+        const isCredentialIssue = message.toLowerCase().includes("invalid login credentials") || message.toLowerCase().includes("user not found") || message.toLowerCase().includes("wrong password");
+        if (!isCredentialIssue && !message.toLowerCase().includes("network") && !message.toLowerCase().includes("timeout")) {
+          throw new Error(message);
         }
-        throw new Error(message);
+        // Fall through to Firebase auth for legacy client accounts created via Firebase Authentication.
       }
     }
 
-    if (!auth) throw new Error("Firebase is not configured.");
-    try {
-      await signInWithEmailAndPassword(auth, normalizedEmail, password);
-    } catch (error) {
-      throw new Error(getReadableError(error));
+    if (auth) {
+      try {
+        await signInWithEmailAndPassword(auth, normalizedEmail, password);
+        return;
+      } catch (error) {
+        const readable = getReadableError(error);
+        if (/Email or password does not match/i.test(readable)) {
+          throw new Error("Email or password does not match an active account or saved local login.");
+        }
+        throw new Error(readable);
+      }
     }
+
+    throw new Error("Email or password does not match an active account or saved local login.");
   }
 
   async function logout() {
