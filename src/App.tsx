@@ -1,7 +1,6 @@
 import { CircleHelp, CloudCog, ExternalLink, ShieldCheck } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useAuth } from "./lib/auth";
-import { firebaseReady } from "./lib/firebase";
 import { isSupabaseReady } from "./lib/supabase";
 import type { UserProfile } from "./lib/types";
 import { LoginScreen } from "./components/LoginScreen";
@@ -14,14 +13,14 @@ export default function App() {
   const [demoMode, setDemoMode] = useState(false);
 
   if (demoMode) return <Workspace user={{ email: "demo@parceldesk.local" }} profile={demoProfile} onLogout={async () => setDemoMode(false)} demoMode />;
-  if (!firebaseReady && !isSupabaseReady()) {
-    return <SetupCard icon={<CloudCog size={22} />} title="Add Firebase or Supabase configuration" text="The app reads auth settings from the local .env.local file. Add Firebase or Supabase values, then restart the development server." onDemo={() => setDemoMode(true)} />;
+  if (!isSupabaseReady()) {
+    return <SetupCard icon={<CloudCog size={22} />} title="Add Supabase configuration" text="The app reads auth and workspace settings from the local .env.local file. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then restart the development server." onDemo={() => setDemoMode(true)} />;
   }
   if (authState.loading) return <div className="loading-screen"><span className="loader-mark" /><p>Opening your workspace…</p></div>;
   if (!authState.user) return <LoginScreen onLogin={authState.login} onDemo={() => setDemoMode(true)} />;
-  if (authState.error) return <SetupCard icon={<CircleHelp size={22} />} title="Could not load your access" text={`Firestore denied the signed-in user's profile read. ${authState.error} Check that the secure Firestore rules are published in the same Firebase project.`} detail={authState.user ? `Signed-in UID: ${authState.user.uid}` : undefined} onDemo={() => setDemoMode(true)} />;
+  if (authState.error) return <SetupCard icon={<CircleHelp size={22} />} title="Could not load your access" text={`Supabase access could not be loaded. ${authState.error}`} detail={authState.user ? `Signed-in UID: ${authState.user.uid}` : undefined} onDemo={() => setDemoMode(true)} />;
   if (!authState.profile) {
-    return <SetupCard icon={<ShieldCheck size={22} />} title="Admin access needs setup" text="Create a users/{uid} profile document in Firestore for this Firebase Auth user. Add role=admin and active=true, then reload." detail={`Signed-in UID: ${authState.user.uid}`} onDemo={() => setDemoMode(true)} />;
+    return <SetupCard icon={<ShieldCheck size={22} />} title="Admin access needs setup" text="Create the matching Supabase profile for this user with role=admin and active=true, then reload." detail={`Signed-in UID: ${authState.user.uid}`} onDemo={() => setDemoMode(true)} />;
   }
   return <Workspace user={authState.user} profile={authState.profile} onLogout={authState.logout} />;
 }
