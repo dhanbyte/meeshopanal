@@ -28,7 +28,7 @@ function canvasForImage(file: File): Promise<HTMLCanvasElement> {
         reject(new Error("This browser could not prepare the label for reading."));
         return;
       }
-      const scale = Math.min(2.5, 2600 / Math.max(image.naturalWidth, image.naturalHeight));
+      const scale = Math.min(1.25, 1500 / Math.max(image.naturalWidth, image.naturalHeight));
       canvas.width = Math.round(image.naturalWidth * scale);
       canvas.height = Math.round(image.naturalHeight * scale);
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
@@ -82,11 +82,13 @@ export async function readLabel(file: File, onProgress?: (progress: number) => v
   let pageCount = 1;
   let worker: Awaited<ReturnType<typeof createWorker>> | undefined;
   const getWorker = async () => {
-    worker ??= await createWorker("eng", 1, { logger: (message) => {
-      if (message.status === "recognizing text") {
-        onProgress?.(Math.round(((activeOcrPage - 1 + message.progress) / pageCount) * 100));
-      }
-    } });
+    if (!worker) {
+      worker = await createWorker("eng", 1, { logger: (message) => {
+        if (message.status === "recognizing text") {
+          onProgress?.(Math.round(((activeOcrPage - 1 + message.progress) / pageCount) * 100));
+        }
+      } });
+    }
     return worker;
   };
 
@@ -116,7 +118,7 @@ export async function readLabel(file: File, onProgress?: (progress: number) => v
           const canvas = document.createElement("canvas");
           const context = canvas.getContext("2d", { willReadFrequently: true });
           if (!context) throw new Error("This browser could not prepare the PDF for reading.");
-          const renderViewport = page.getViewport({ scale: 2.5 });
+          const renderViewport = page.getViewport({ scale: 1.2 });
           canvas.width = Math.ceil(renderViewport.width);
           canvas.height = Math.ceil(renderViewport.height);
           await page.render({ canvas, canvasContext: context, viewport: renderViewport }).promise;
@@ -132,7 +134,7 @@ export async function readLabel(file: File, onProgress?: (progress: number) => v
         const canvas = document.createElement("canvas");
         const context = canvas.getContext("2d", { willReadFrequently: true });
         if (!context) throw new Error("This browser could not prepare the PDF for reading.");
-        const renderViewport = page.getViewport({ scale: 2.5 });
+        const renderViewport = page.getViewport({ scale: 1.2 });
         canvas.width = Math.ceil(renderViewport.width);
         canvas.height = Math.ceil(renderViewport.height);
         await page.render({ canvas, canvasContext: context, viewport: renderViewport }).promise;

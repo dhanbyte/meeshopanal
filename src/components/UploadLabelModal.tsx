@@ -36,6 +36,17 @@ function totalQuantity(items: ShipmentItem[]) {
   return items.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0), 0);
 }
 
+function missingLabelFields(label: LabelReview) {
+  const item = label.items[0] ?? { productName: "", sku: "", quantity: 1, unitCost: 0 };
+  const missing: string[] = [];
+  if (!label.draft.awb.trim()) missing.push("AWB");
+  if (!label.draft.customerName.trim()) missing.push("Customer");
+  if (!item.productName.trim()) missing.push("Product");
+  if (!Number.isFinite(item.quantity) || item.quantity < 1) missing.push("Qty");
+  if (!Number.isFinite(item.unitCost) || item.unitCost <= 0) missing.push("Price");
+  return missing;
+}
+
 export function UploadLabelModal({ clients, profile, demoMode = false, existingAwbs = [], productPriceDefaults = [], onClose, onSaved, onProductPriceDefaultSaved }: UploadLabelModalProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [clientId, setClientId] = useState(profile.role === "client" ? profile.clientId ?? "" : "");
@@ -151,6 +162,8 @@ export function UploadLabelModal({ clients, profile, demoMode = false, existingA
     }
     for (const [index, label] of labels.entries()) {
       if (label.saved) continue;
+      const missingFields = missingLabelFields(label);
+      if (missingFields.length) return setError(`Row ${index + 1}: missing fields: ${missingFields.join(", ")}.`);
       if (!label.draft.customerName.trim()) return setError(`Row ${index + 1}: enter the customer name.`);
       if (!label.items[0]?.productName.trim()) return setError(`Row ${index + 1}: enter the product name.`);
       if (!Number.isFinite(label.items[0]?.quantity) || label.items[0].quantity < 1) return setError(`Row ${index + 1}: quantity must be at least 1.`);
@@ -249,9 +262,9 @@ export function UploadLabelModal({ clients, profile, demoMode = false, existingA
                   const duplicate = Boolean(awbKey && (existingAwbs.some((value) => normalizeAwb(value) === awbKey) || labels.slice(0, index).some((previous) => normalizeAwb(previous.draft.awb) === awbKey)));
                   const editing = editingId === label.shipmentId;
                   return <tr key={label.shipmentId} className={duplicate && !label.saved ? "duplicate-row" : ""}>
-                    <td>{editing && !label.saved ? <CompactInput ariaLabel={`Tracking ID row ${index + 1}`} value={label.draft.awb} onChange={(value) => updateDraft(index, "awb", value)} /> : <><span className="compact-cell-value">{label.draft.awb || "Needs tracking ID"}</span>{duplicate && !label.saved ? <small className="duplicate-awb-note">Already used</small> : null}</>}</td>
-                    <td>{editing && !label.saved ? <CompactInput ariaLabel={`Customer name row ${index + 1}`} value={label.draft.customerName} onChange={(value) => updateDraft(index, "customerName", value)} /> : <span className="compact-cell-value">{label.draft.customerName || "Name not detected"}</span>}</td>
-                    <td>{editing && !label.saved ? <CompactInput ariaLabel={`Product name row ${index + 1}`} value={item.productName} onChange={(value) => updateProduct(index, value)} /> : <span className="compact-cell-value">{item.productName || "Product not detected"}</span>}</td>
+                    <td>{editing && !label.saved ? <CompactInput ariaLabel={`Tracking ID row ${index + 1}`} value={label.draft.awb} onChange={(value) => updateDraft(index, "awb", value)} /> : <><span className="compact-cell-value">{label.draft.awb || "Needs tracking ID"}</span>{duplicate && !label.saved ? <small className="duplicate-awb-note">Already used</small> : null}{!label.draft.awb && !label.saved ? <small className="duplicate-awb-note">Missing: AWB</small> : null}</>}</td>
+                    <td>{editing && !label.saved ? <CompactInput ariaLabel={`Customer name row ${index + 1}`} value={label.draft.customerName} onChange={(value) => updateDraft(index, "customerName", value)} /> : <><span className="compact-cell-value">{label.draft.customerName || "Name not detected"}</span>{!label.draft.customerName && !label.saved ? <small className="duplicate-awb-note">Missing: Customer</small> : null}</>}</td>
+                    <td>{editing && !label.saved ? <CompactInput ariaLabel={`Product name row ${index + 1}`} value={item.productName} onChange={(value) => updateProduct(index, value)} /> : <><span className="compact-cell-value">{item.productName || "Product not detected"}</span>{!item.productName && !label.saved ? <small className="duplicate-awb-note">Missing: Product</small> : null}</>}</td>
                     <td>{!label.saved ? <CompactInput ariaLabel={`Product cost row ${index + 1}`} type="number" placeholder="Cost" value={label.priceDraft} onChange={(value) => updatePrice(index, value)} disabled={saving} /> : <span>{item.unitCost ? `₹${item.unitCost.toFixed(2)}` : "—"}</span>}</td>
                     <td>{editing && !label.saved ? <CompactInput ariaLabel={`Quantity row ${index + 1}`} type="number" value={String(item.quantity || "")} onChange={(value) => updateFirstItem(index, { quantity: Number(value) || 0 })} /> : <span>{totalQuantity(label.items)}</span>}</td>
                     <td className="compact-line-total">₹{lineAmount(label.items).toFixed(2)}</td>
