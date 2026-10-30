@@ -6,6 +6,8 @@ import { supabase } from "./supabase";
 import type { UserProfile } from "./types";
 
 const LOCAL_SESSION_KEY = "parcelDeskLocalSession";
+const LOCAL_ADMIN_EMAIL = "admin@gmail.com";
+const LOCAL_ADMIN_PASSWORD = "admin123";
 
 function getLocalSession() {
   if (typeof window === "undefined") return null;
@@ -161,7 +163,12 @@ export function useAuth() {
     }
 
     if (!currentAuth || !currentDb) {
-      setState({ user: null, profile: null, loading: false, error: "Firebase is not configured." });
+      const localSession = getLocalSession();
+      if (localSession) {
+        setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
+        return undefined;
+      }
+      setState({ user: null, profile: null, loading: false, error: "Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local." });
       return undefined;
     }
 
@@ -193,11 +200,15 @@ export function useAuth() {
   async function login(email: string, password: string) {
     const normalizedEmail = email.trim().toLowerCase();
 
-    if (normalizedEmail === "admin@gmail.com" && password === "admin123") {
+    if (normalizedEmail === LOCAL_ADMIN_EMAIL && password === LOCAL_ADMIN_PASSWORD) {
       const profile = buildLocalAdminProfile();
       setLocalSession(normalizedEmail, profile);
       setState({ user: buildLocalUser(normalizedEmail, profile), profile, loading: false, error: "" });
       return;
+    }
+
+    if (!supabase) {
+      throw new Error("Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local, or use the local admin login credentials.");
     }
 
     if (supabase) {
