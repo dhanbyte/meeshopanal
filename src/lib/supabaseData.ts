@@ -207,6 +207,25 @@ export async function deleteLedgerEntrySupabase(id: string) {
   if (deleteError) throw deleteError;
 }
 
+export async function deleteClientSupabase(id: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+
+  const { error: deleteLedger } = await supabase.from("ledger_entries").delete().eq("client_id", id);
+  if (deleteLedger) throw deleteLedger;
+
+  const { error: deleteReturns } = await supabase.from("returns").delete().eq("client_id", id);
+  if (deleteReturns) throw deleteReturns;
+
+  const { error: deleteShipments } = await supabase.from("shipments").delete().eq("client_id", id);
+  if (deleteShipments) throw deleteShipments;
+
+  const { error: deleteBalance } = await supabase.from("client_balances").delete().eq("client_id", id);
+  if (deleteBalance) throw deleteBalance;
+
+  const { error: deleteClient } = await supabase.from("clients").delete().eq("id", id);
+  if (deleteClient) throw deleteClient;
+}
+
 export async function deleteShipmentSupabase(id: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
 
