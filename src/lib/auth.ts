@@ -83,6 +83,10 @@ export function useAuth() {
   const [state, setState] = useState<AuthState>({ user: null, profile: null, loading: true, error: "" });
 
   useEffect(() => {
+    const currentAuth = auth;
+    const currentDb = db;
+    let firebaseUnsubscribe: (() => void) | undefined;
+
     if (supabase) {
       let active = true;
       void supabase.auth.getSession().then(({ data: { session } }) => {
@@ -124,9 +128,30 @@ export function useAuth() {
         setState({ user: buildSupabaseUser(session.user), profile, loading: false, error: "" });
       });
 
+      if (currentAuth && currentDb) {
+        firebaseUnsubscribe = onAuthStateChanged(currentAuth, async (user) => {
+          if (!user) return;
+          try {
+            const profileDoc = await getDoc(doc(currentDb, "users", user.uid));
+            const profile: UserProfile = profileDoc.exists()
+              ? ({ uid: user.uid, ...profileDoc.data() } as UserProfile)
+              : { uid: user.uid, name: user.displayName || user.email || "Firebase user", role: "client", active: true };
+            if (!profile.active) {
+              await signOut(currentAuth);
+              setState({ user: null, profile: null, loading: false, error: "This account is inactive. Ask your admin for access." });
+              return;
+            }
+            setState({ user, profile, loading: false, error: "" });
+          } catch (error) {
+            setState({ user, profile: null, loading: false, error: getReadableError(error) });
+          }
+        });
+      }
+
       return () => {
         active = false;
         subscription.unsubscribe();
+        firebaseUnsubscribe?.();
       };
     }
 
@@ -136,8 +161,6 @@ export function useAuth() {
       return undefined;
     }
 
-    const currentAuth = auth;
-    const currentDb = db;
     if (!currentAuth || !currentDb) {
       setState({ user: null, profile: null, loading: false, error: "Firebase is not configured." });
       return undefined;
@@ -211,9 +234,19 @@ export function useAuth() {
       }
     }
 
-    if (auth) {
+    if (auth && db) {
       try {
-        await signInWithEmailAndPassword(auth, normalizedEmail, password);
+        const firebaseUser = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+        const profileDoc = await getDoc(doc(db, "users", firebaseUser.user.uid));
+        const profile: UserProfile = profileDoc.exists()
+          ? ({ uid: firebaseUser.user.uid, ...profileDoc.data() } as UserProfile)
+          : { uid: firebaseUser.user.uid, name: firebaseUser.user.displayName || normalizedEmail, role: "client", active: true };
+        if (!profile.active) {
+          await signOut(auth);
+          throw new Error("This account is inactive. Ask your admin for access.");
+        }
+        clearLocalSession();
+        setState({ user: firebaseUser.user, profile, loading: false, error: "" });
         return;
       } catch (error) {
         const readable = getReadableError(error);
