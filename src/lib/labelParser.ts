@@ -72,9 +72,18 @@ function isMetadataLine(line: string) {
   return /(?:awb|tracking|waybill|order|invoice|qty|quantity|pieces|total|amount|price|cost|courier|logistics|phone|mobile|address|pincode|city|state|ship\s*to|customer|consignee|name not detected|not detected)/i.test(line);
 }
 
+function cleanNameField(value: string) {
+  return value
+    .replace(/^name\s*[:\-]?\s*/i, "")
+    .replace(/^customer\s*[:\-]?\s*/i, "")
+    .replace(/[,;]+\s*$/, "")
+    .trim();
+}
+
 function extractCustomerCandidate(lines: string[]) {
   const candidates = lines
     .map((line) => normalizeLine(line))
+    .map((line) => cleanNameField(line))
     .filter((line) => line && !isMetadataLine(line) && line.length > 2 && !/^\d+$/.test(line) && !/^[₹$€£]/.test(line))
     .filter((line) => /[A-Za-z]/.test(line));
 
@@ -90,6 +99,13 @@ function extractProductCandidate(lines: string[]) {
     .map((line) => normalizeLine(line))
     .filter((line) => line && !isMetadataLine(line) && line.length > 3 && !/^\d+$/.test(line) && !/^[₹$€£]/.test(line))
     .filter((line) => /[A-Za-z]/.test(line));
+
+  const skuLine = candidates.find((line) => /[|_]/.test(line) && /[A-Za-z]/.test(line));
+  if (skuLine) {
+    const split = skuLine.split("|");
+    const value = split.length > 1 ? split[split.length - 1] : skuLine.replace(/^[A-Z0-9_-]+\s*[-:|]\s*/i, "");
+    return value.trim();
+  }
 
   const goodName = candidates.find((line) => /^[A-Z0-9][A-Za-z0-9 /&()-.]{2,80}$/.test(line) && !/^(?:delivery|pickup|label|shipment)$/i.test(line));
   if (goodName) return goodName;
@@ -117,8 +133,9 @@ function parseCustomerLines(lines: string[]) {
   const customerName = block.find((line) => !/\b(?:address|city|state|pincode|phone|mobile|pin|phone no)\b/i.test(line)) ?? "";
   const customerAddress = block.filter((line) => !/^(?:mr|ms|mrs|name|customer)$/i.test(line)).join(", ");
   if (customerName || customerAddress) {
+    const resolvedName = cleanNameField(customerName || (lineText.match(/(?:customer|consignee|ship\s*to|delivery\s*to)\s*[:\-]?\s*([A-Z][A-Za-z.\s'-]{2,60})/i)?.[1]?.trim() ?? ""));
     return {
-      customerName: customerName || (lineText.match(/(?:customer|consignee|ship\s*to|delivery\s*to)\s*[:\-]?\s*([A-Z][A-Za-z.\s'-]{2,60})/i)?.[1]?.trim() ?? ""),
+      customerName: resolvedName,
       customerAddress: customerAddress || "",
     };
   }
