@@ -585,12 +585,8 @@ export async function createLedgerEntry(
 
 export async function deleteLedgerEntry(id: string) {
   if (supabase) {
-    try {
-      await deleteLedgerEntrySupabase(id);
-      return;
-    } catch (error) {
-      console.warn("Supabase deleteLedgerEntry failed; falling back to Firestore.", error);
-    }
+    await deleteLedgerEntrySupabase(id);
+    return;
   }
 
   const { db } = requireFirebase();
