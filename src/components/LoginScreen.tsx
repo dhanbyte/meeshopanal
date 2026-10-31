@@ -1,27 +1,44 @@
 import { ArrowRight, LockKeyhole, PackageCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { isEmailNotConfirmedError } from "../lib/auth";
 
 interface LoginScreenProps {
   onLogin: (email: string, password: string) => Promise<void>;
+  onResendConfirmation: (email: string) => Promise<void>;
   onDemo: () => void;
 }
 
-export function LoginScreen({ onLogin, onDemo }: LoginScreenProps) {
+export function LoginScreen({ onLogin, onResendConfirmation, onDemo }: LoginScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmationRequired, setConfirmationRequired] = useState(false);
+  const [resendStatus, setResendStatus] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    setResendStatus("");
+    setConfirmationRequired(false);
     setBusy(true);
     try {
       await onLogin(email, password);
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : "Could not sign in. Check your details and try again.");
+      setConfirmationRequired(isEmailNotConfirmedError(issue) || /email not confirmed/i.test(issue instanceof Error ? issue.message : ""));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleResendConfirmation() {
+    setResendStatus("");
+    try {
+      await onResendConfirmation(email);
+      setResendStatus("Confirmation email sent. Check your inbox and spam folder.");
+    } catch (issue) {
+      setResendStatus(issue instanceof Error ? issue.message : "Could not resend the confirmation email.");
     }
   }
 
@@ -43,6 +60,8 @@ export function LoginScreen({ onLogin, onDemo }: LoginScreenProps) {
           <label className="field-label" htmlFor="login-password">Password</label>
           <input id="login-password" className="input" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" required />
           {error ? <div className="form-error" role="alert">{error}</div> : null}
+          {confirmationRequired ? <button className="button button-secondary button-full" type="button" onClick={handleResendConfirmation}>Resend confirmation email</button> : null}
+          {resendStatus ? <div className="form-hint" role="status">{resendStatus}</div> : null}
           <button className="button button-primary button-full" type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}<ArrowRight size={17} />
           </button>

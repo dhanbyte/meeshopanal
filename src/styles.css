@@ -334,6 +334,7 @@ a { color: inherit; }
 .modal-message { display: flex; align-items: center; gap: 7px; padding: 9px 21px; font-size: 10px; }
 .error-message, .form-error { color: #a94e5a; background: #fff1f2; border: 1px solid #f2d7da; border-radius: 8px; }
 .form-error { padding: 9px 10px; font-size: 9px; line-height: 1.45; }
+.form-hint { color: #187963; background: #ecf8f4; border: 1px solid #cceee4; border-radius: 8px; padding: 9px 10px; font-size: 9px; line-height: 1.45; }
 .success-message { color: #187963; background: #ecf8f4; }
 .price-warning { color: #81601d; background: #fff8e7; border: 1px solid #f2e3ba; }
 .linked-order { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; color: #66768a; background: #f7fafb; border: 1px solid #edf1f4; border-radius: 9px; font-size: 9px; }

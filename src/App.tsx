@@ -17,7 +17,7 @@ export default function App() {
     return <SetupCard icon={<CloudCog size={22} />} title="Add Supabase configuration" text="The app reads auth and workspace settings from the local .env.local file. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then restart the development server." onDemo={() => setDemoMode(true)} />;
   }
   if (authState.loading) return <div className="loading-screen"><span className="loader-mark" /><p>Opening your workspace…</p></div>;
-  if (!authState.user) return <LoginScreen onLogin={authState.login} onDemo={() => setDemoMode(true)} />;
+  if (!authState.user) return <LoginScreen onLogin={authState.login} onResendConfirmation={authState.resendConfirmation} onDemo={() => setDemoMode(true)} />;
   if (authState.error) return <SetupCard icon={<CircleHelp size={22} />} title="Could not load your access" text={`Supabase access could not be loaded. ${authState.error}`} detail={authState.user ? `Signed-in UID: ${authState.user.uid}` : undefined} onDemo={() => setDemoMode(true)} />;
   if (!authState.profile) {
     return <SetupCard icon={<ShieldCheck size={22} />} title="Admin access needs setup" text="Create the matching Supabase profile for this user with role=admin and active=true, then reload." detail={`Signed-in UID: ${authState.user.uid}`} onDemo={() => setDemoMode(true)} />;

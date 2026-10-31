@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { User } from "firebase/auth";
 import { Activity, Bell, ChevronDown, CircleUserRound, LayoutDashboard, LogOut, Menu, PackageCheck, PackageOpen, RefreshCw, RotateCcw, Search, ShieldCheck, UsersRound, WalletCards, X } from "lucide-react";
 import { clientPendingAmount, deleteClient, deleteLedgerEntry, deleteShipment, loadDailyActivity, loadWorkspace, normalizeAwb, updateReturnRecord, updateShipmentStatus } from "../lib/data";
 import { demoWorkspaceData } from "../lib/demoData";
@@ -25,7 +24,7 @@ const titles: Record<PageId, { title: string; subtitle: string }> = {
   ledger: { title: "Money ledger", subtitle: "Reconcile settlements, client payouts and amounts due." },
 };
 
-export function Workspace({ user, profile, onLogout, demoMode = false }: { user: Pick<User, "email">; profile: UserProfile; onLogout: () => Promise<void>; demoMode?: boolean }) {
+export function Workspace({ user, profile, onLogout, demoMode = false }: { user: { email?: string | null }; profile: UserProfile; onLogout: () => Promise<void>; demoMode?: boolean }) {
   const [data, setData] = useState<WorkspaceData>(demoMode ? demoWorkspaceData : { clients: [], balances: [], shipments: [], returns: [], ledgerEntries: [], productPriceDefaults: [] });
   const [dailyActivity, setDailyActivity] = useState<Pick<WorkspaceData, "shipments" | "returns" | "ledgerEntries">>({ shipments: [], returns: [], ledgerEntries: [] });
   const [dailyLoading, setDailyLoading] = useState(!demoMode);
@@ -152,13 +151,13 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
   }
 
   async function handleDeleteClient(client: Client) {
-    const confirmed = window.confirm(`Delete the client record for ${client.businessName || client.name}? This will also remove that client\'s related shipments, returns, balances and ledger entries.`);
+    const confirmed = window.confirm(`Permanently delete ${client.businessName || client.name}? This will remove the client, orders, returns, balances and ledger history and cannot be undone.`);
     if (!confirmed) return;
     try {
       await deleteClient(client.id);
       await refresh(true);
       await refreshDaily(selectedDate);
-      showNotice("Client deleted.");
+      showNotice("Client and all related data deleted.");
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : "Client could not be removed.");
     }

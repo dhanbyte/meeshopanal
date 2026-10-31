@@ -26,57 +26,6 @@ import type { Client, ClientBalance, EvidenceFile, LedgerEntry, ProductPriceDefa
 
 const PAGE_LIMIT = 500;
 const PRODUCT_PRICE_CACHE_KEY = "parceldesk.product-price-defaults.v1";
-const LEGACY_WORKSPACE_STORAGE_KEYS = [
-  "parceldesk.legacy.workspace",
-  "parceldesk.workspace",
-  "parcelDeskWorkspaceData",
-  "parcelDeskLegacyWorkspace",
-  "parcelDesk.workspace.data",
-  "parceldesk-workspace-data",
-  "workspaceData",
-];
-
-function snakeCase(value: string) {
-  return value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/\s+/g, "_").toLowerCase();
-}
-
-function toSupabaseRow<T>(value: T): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [snakeCase(key), item])) as Record<string, unknown>;
-}
-
-function toSupabaseIso(value: unknown): string | null {
-  if (!value) return null;
-  if (typeof value === "string") return value;
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "number") return new Date(value).toISOString();
-  if (typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
-    return (value as { toDate: () => Date }).toDate().toISOString();
-  }
-  return null;
-}
-
-function readLegacyWorkspaceFromLocalStorage(): Partial<WorkspaceData> | null {
-  if (typeof window === "undefined") return null;
-
-  for (const key of LEGACY_WORKSPACE_STORAGE_KEYS) {
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed && typeof parsed === "object") {
-        const candidate = parsed as Partial<WorkspaceData> & Record<string, unknown>;
-        if (Array.isArray(candidate.clients) || Array.isArray(candidate.balances) || Array.isArray(candidate.shipments) || Array.isArray(candidate.returns) || Array.isArray(candidate.ledgerEntries)) {
-          return candidate;
-        }
-      }
-    } catch {
-      // Ignore malformed local backup entries and continue scanning.
-    }
-  }
-
-  return null;
-}
-
 function isPermissionDenied(error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code)
@@ -110,76 +59,8 @@ function shipmentAmount(items: ShipmentItem[] = []) {
 }
 
 export async function syncLegacyWorkspaceToSupabase(profile: UserProfile): Promise<{ clients: number; balances: number; shipments: number; returns: number; ledgerEntries: number }> {
-  if (!supabase || profile.role !== "admin") {
-    return { clients: 0, balances: 0, shipments: 0, returns: 0, ledgerEntries: 0 };
-  }
-
-  const legacyWorkspace = readLegacyWorkspaceFromLocalStorage();
-  if (!legacyWorkspace) {
-    return { clients: 0, balances: 0, shipments: 0, returns: 0, ledgerEntries: 0 };
-  }
-
-  const clients = Array.isArray(legacyWorkspace.clients) ? legacyWorkspace.clients as Client[] : [];
-  const balances = Array.isArray(legacyWorkspace.balances) ? legacyWorkspace.balances as ClientBalance[] : [];
-  const shipments = Array.isArray(legacyWorkspace.shipments) ? legacyWorkspace.shipments as Shipment[] : [];
-  const returns = Array.isArray(legacyWorkspace.returns) ? legacyWorkspace.returns as ReturnRecord[] : [];
-  const ledgerEntries = Array.isArray(legacyWorkspace.ledgerEntries) ? legacyWorkspace.ledgerEntries as LedgerEntry[] : [];
-
-  const clientRows = clients.map((row) => ({
-    ...toSupabaseRow(row as unknown as Record<string, unknown>),
-    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
-    updated_at: toSupabaseIso((row as { updatedAt?: unknown }).updatedAt) ?? toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
-  }));
-
-  const balanceRows = balances.map((row) => ({
-    ...toSupabaseRow(row as unknown as Record<string, unknown>),
-    updated_at: toSupabaseIso(row.updatedAt) ?? new Date().toISOString(),
-  }));
-
-  const shipmentRows = shipments.map((row) => ({
-    ...toSupabaseRow(row as unknown as Record<string, unknown>),
-    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
-    updated_at: toSupabaseIso(row.updatedAt) ?? toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
-  }));
-
-  const returnRows = returns.map((row) => ({
-    ...toSupabaseRow(row as unknown as Record<string, unknown>),
-    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
-  }));
-
-  const ledgerRows = ledgerEntries.map((row) => ({
-    ...toSupabaseRow(row as unknown as Record<string, unknown>),
-    created_at: toSupabaseIso(row.createdAt) ?? new Date().toISOString(),
-  }));
-
-  if (clientRows.length) {
-    const { error } = await supabase.from("clients").upsert(clientRows, { onConflict: "id" });
-    if (error) throw error;
-  }
-  if (balanceRows.length) {
-    const { error } = await supabase.from("client_balances").upsert(balanceRows, { onConflict: "id" });
-    if (error) throw error;
-  }
-  if (shipmentRows.length) {
-    const { error } = await supabase.from("shipments").upsert(shipmentRows, { onConflict: "id" });
-    if (error) throw error;
-  }
-  if (returnRows.length) {
-    const { error } = await supabase.from("returns").upsert(returnRows, { onConflict: "id" });
-    if (error) throw error;
-  }
-  if (ledgerRows.length) {
-    const { error } = await supabase.from("ledger_entries").upsert(ledgerRows, { onConflict: "id" });
-    if (error) throw error;
-  }
-
-  return {
-    clients: clientRows.length,
-    balances: balanceRows.length,
-    shipments: shipmentRows.length,
-    returns: returnRows.length,
-    ledgerEntries: ledgerRows.length,
-  };
+  void profile;
+  return { clients: 0, balances: 0, shipments: 0, returns: 0, ledgerEntries: 0 };
 }
 
 export function clientPendingAmount(clientId: string, shipments: Shipment[], balances: ClientBalance[]) {

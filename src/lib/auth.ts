@@ -1,7 +1,4 @@
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
 import { useEffect, useState } from "react";
-import { auth, db } from "./firebase";
 import { supabase } from "./supabase";
 import type { UserProfile } from "./types";
 
@@ -9,284 +6,144 @@ const LOCAL_SESSION_KEY = "parcelDeskLocalSession";
 const LOCAL_ADMIN_EMAIL = "admin@gmail.com";
 const LOCAL_ADMIN_PASSWORD = "admin123";
 
-function getLocalSession() {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(LOCAL_SESSION_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as { email: string; profile: UserProfile };
-  } catch {
-    return null;
-  }
+function localProfile(): UserProfile {
+  return { uid: "admin-local-uid", name: "Admin", role: "admin", active: true };
 }
 
-function setLocalSession(email: string, profile: UserProfile) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify({ email, profile }));
+function localUser(email: string) {
+  return { uid: "admin-local-uid", email, displayName: "Admin", emailVerified: true };
 }
 
-function clearLocalSession() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(LOCAL_SESSION_KEY);
-}
-
-function buildLocalUser(email: string, profile: UserProfile) {
+function profileFor(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }, role: "admin" | "staff" | "client", clientId?: string): UserProfile {
   return {
-    uid: profile.uid,
-    email,
-    displayName: profile.name || email,
-    getIdToken: async () => "local-fallback-token",
-    emailVerified: true,
-  } as User;
-}
-
-function buildSupabaseProfile(user: { id?: string; email?: string | null; user_metadata?: { role?: string; name?: string; clientId?: string; clientIds?: string[] } }): UserProfile {
-  const role = user.user_metadata?.role === "admin" || user.user_metadata?.role === "staff" || user.user_metadata?.role === "client"
-    ? user.user_metadata.role
-    : "admin";
-  return {
-    uid: user.id || user.email || "supabase-user",
-    name: user.user_metadata?.name || user.email || "Supabase user",
+    uid: user.id,
+    name: typeof user.user_metadata?.name === "string" ? user.user_metadata.name : user.email || "Supabase user",
     role,
-    active: true,
-    clientId: user.user_metadata?.clientId,
-    clientIds: user.user_metadata?.clientIds,
+    active: user.user_metadata?.active !== false,
+    clientId: clientId || (typeof user.user_metadata?.clientId === "string" ? user.user_metadata.clientId : undefined),
+    clientIds: Array.isArray(user.user_metadata?.clientIds) ? user.user_metadata.clientIds as string[] : undefined,
   };
 }
 
-function buildSupabaseUser(user: { id?: string; email?: string | null; user_metadata?: { name?: string } }): User {
-  return {
-    uid: user.id || user.email || "supabase-user",
-    email: user.email || "",
-    displayName: user.user_metadata?.name || user.email || "Supabase user",
-    getIdToken: async () => "supabase-session-token",
-    emailVerified: true,
-  } as User;
-}
+async function resolveProfile(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }) {
+  const metadataRole = user.user_metadata?.role;
+  if (metadataRole === "admin" || metadataRole === "staff") {
+    return profileFor(user, metadataRole);
+  }
 
-function buildLocalAdminProfile(): UserProfile {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("clients").select("id, name, active").eq("auth_uid", user.id).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
   return {
-    uid: "admin-local-uid",
-    name: "Admin",
-    role: "admin",
-    active: true,
+    ...profileFor(user, "client", data.id),
+    name: data.name || profileFor(user, "client", data.id).name,
+    active: data.active === true,
   };
 }
 
 export interface AuthState {
-  user: User | null;
+  user: { uid: string; email?: string | null; displayName?: string; emailVerified?: boolean } | null;
   profile: UserProfile | null;
   loading: boolean;
   error: string;
+}
+
+export function isEmailNotConfirmedError(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return code === "email_not_confirmed" || /email not confirmed/i.test(message);
+}
+
+export function getReadableError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/invalid login credentials/i.test(message)) return "Email or password does not match an active account.";
+  if (/email not confirmed/i.test(message)) return "Email not confirmed. Ask an administrator to reset this client login from the panel.";
+  return message || "Something went wrong. Please try again.";
 }
 
 export function useAuth() {
   const [state, setState] = useState<AuthState>({ user: null, profile: null, loading: true, error: "" });
 
   useEffect(() => {
-    const currentAuth = auth;
-    const currentDb = db;
-    let firebaseUnsubscribe: (() => void) | undefined;
+    if (!supabase) {
+      try {
+        const saved = window.localStorage.getItem(LOCAL_SESSION_KEY);
+        if (saved) setState({ user: localUser(LOCAL_ADMIN_EMAIL), profile: localProfile(), loading: false, error: "" });
+        else setState({ user: null, profile: null, loading: false, error: "Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY." });
+      } catch {
+        setState({ user: null, profile: null, loading: false, error: "Supabase is not configured." });
+      }
+      return;
+    }
 
-    if (supabase) {
-      let active = true;
-      void supabase.auth.getSession().then(({ data: { session } }) => {
-        if (!session || !active) {
-          const localSession = getLocalSession();
-          if (localSession) {
-            setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
-          } else {
-            setState({ user: null, profile: null, loading: false, error: "" });
-          }
-          return;
-        }
-        const user = session.user;
-        const profile = buildSupabaseProfile(user);
-        clearLocalSession();
-        setState({ user: buildSupabaseUser(user), profile, loading: false, error: "" });
-      }).catch(() => {
-        if (!active) return;
-        const localSession = getLocalSession();
-        if (localSession) {
-          setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
-          return;
-        }
-        setState({ user: null, profile: null, loading: false, error: "Supabase session could not be loaded." });
-      });
-
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (!session) {
-          const localSession = getLocalSession();
-          if (localSession) {
-            setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
-            return;
-          }
+    const client = supabase;
+    let active = true;
+    void client.auth.getSession().then(async ({ data }) => {
+      if (!active) return;
+      if (data.session?.user) {
+        const user = data.session.user;
+        const profile = await resolveProfile(user);
+        if (!profile) {
+          await client.auth.signOut();
           setState({ user: null, profile: null, loading: false, error: "" });
           return;
         }
-        const profile = buildSupabaseProfile(session.user);
-        clearLocalSession();
-        setState({ user: buildSupabaseUser(session.user), profile, loading: false, error: "" });
-      });
-
-      if (currentAuth && currentDb) {
-        firebaseUnsubscribe = onAuthStateChanged(currentAuth, async (user) => {
-          if (!user) return;
-          try {
-            const profileDoc = await getDoc(doc(currentDb, "users", user.uid));
-            const profile: UserProfile = profileDoc.exists()
-              ? ({ uid: user.uid, ...profileDoc.data() } as UserProfile)
-              : { uid: user.uid, name: user.displayName || user.email || "Firebase user", role: "client", active: true };
-            if (!profile.active) {
-              await signOut(currentAuth);
-              setState({ user: null, profile: null, loading: false, error: "This account is inactive. Ask your admin for access." });
-              return;
-            }
-            setState({ user, profile, loading: false, error: "" });
-          } catch (error) {
-            setState({ user, profile: null, loading: false, error: getReadableError(error) });
-          }
-        });
-      }
-
-      return () => {
-        active = false;
-        subscription.unsubscribe();
-        firebaseUnsubscribe?.();
-      };
-    }
-
-    const localSession = getLocalSession();
-    if (localSession) {
-      setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
-      return undefined;
-    }
-
-    if (!currentAuth || !currentDb) {
-      const localSession = getLocalSession();
-      if (localSession) {
-        setState({ user: buildLocalUser(localSession.email, localSession.profile), profile: localSession.profile, loading: false, error: "" });
-        return undefined;
-      }
-      setState({ user: null, profile: null, loading: false, error: "Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local." });
-      return undefined;
-    }
-
-    return onAuthStateChanged(currentAuth, async (user) => {
-      if (!user) {
+        setState({ user: { uid: user.id, email: user.email, displayName: String(user.user_metadata?.name || user.email || ""), emailVerified: true }, profile, loading: false, error: "" });
+      } else {
         setState({ user: null, profile: null, loading: false, error: "" });
+      }
+    }).catch((error) => {
+      if (active) setState({ user: null, profile: null, loading: false, error: getReadableError(error) });
+    });
+
+    const { data: listener } = client.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        setState((current) => ({ ...current, user: null, profile: null, loading: false }));
         return;
       }
-
-      try {
-        const profileDoc = await getDoc(doc(currentDb, "users", user.uid));
-        if (!profileDoc.exists()) {
-          setState({ user, profile: null, loading: false, error: "" });
+      const user = session.user;
+      void resolveProfile(user).then((profile) => {
+        if (!profile) {
+          void client.auth.signOut();
+          setState({ user: null, profile: null, loading: false, error: "" });
           return;
         }
-        const profile = { uid: user.uid, ...profileDoc.data() } as UserProfile;
-        if (!profile.active) {
-          await signOut(currentAuth);
-          setState({ user: null, profile: null, loading: false, error: "This account is inactive. Ask your admin for access." });
-          return;
-        }
-        setState({ user, profile, loading: false, error: "" });
-      } catch (error) {
-        setState({ user, profile: null, loading: false, error: getReadableError(error) });
-      }
+        setState({ user: { uid: user.id, email: user.email, displayName: String(user.user_metadata?.name || user.email || ""), emailVerified: true }, profile, loading: false, error: "" });
+      }).catch((error) => {
+        setState({ user: null, profile: null, loading: false, error: getReadableError(error) });
+      });
     });
+    return () => { active = false; listener.subscription.unsubscribe(); };
   }, []);
 
   async function login(email: string, password: string) {
     const normalizedEmail = email.trim().toLowerCase();
-
-    if (normalizedEmail === LOCAL_ADMIN_EMAIL && password === LOCAL_ADMIN_PASSWORD) {
-      const profile = buildLocalAdminProfile();
-      setLocalSession(normalizedEmail, profile);
-      setState({ user: buildLocalUser(normalizedEmail, profile), profile, loading: false, error: "" });
+    if (normalizedEmail === LOCAL_ADMIN_EMAIL && password === LOCAL_ADMIN_PASSWORD && !supabase) {
+      window.localStorage.setItem(LOCAL_SESSION_KEY, "true");
+      setState({ user: localUser(normalizedEmail), profile: localProfile(), loading: false, error: "" });
       return;
     }
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+    if (error) throw new Error(getReadableError(error));
+    if (!data.user) throw new Error("No active account was returned.");
+  }
 
-    if (!supabase) {
-      throw new Error("Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local, or use the local admin login credentials.");
-    }
-
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
-        if (error) throw error;
-        const user = data.user;
-        const profile = buildSupabaseProfile(user);
-        clearLocalSession();
-        setState({ user: buildSupabaseUser(user), profile, loading: false, error: "" });
-        return;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Supabase login failed.";
-        const isCredentialIssue = message.toLowerCase().includes("invalid login credentials") || message.toLowerCase().includes("user not found") || message.toLowerCase().includes("wrong password");
-        if (!isCredentialIssue && !message.toLowerCase().includes("network") && !message.toLowerCase().includes("timeout")) {
-          throw new Error(message);
-        }
-        // Fall through to Firebase auth for legacy client accounts created via Firebase Authentication.
-      }
-    }
-
-    if (auth && db) {
-      try {
-        const firebaseUser = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-        const profileDoc = await getDoc(doc(db, "users", firebaseUser.user.uid));
-        const profile: UserProfile = profileDoc.exists()
-          ? ({ uid: firebaseUser.user.uid, ...profileDoc.data() } as UserProfile)
-          : { uid: firebaseUser.user.uid, name: firebaseUser.user.displayName || normalizedEmail, role: "client", active: true };
-        if (!profile.active) {
-          await signOut(auth);
-          throw new Error("This account is inactive. Ask your admin for access.");
-        }
-        clearLocalSession();
-        setState({ user: firebaseUser.user, profile, loading: false, error: "" });
-        return;
-      } catch (error) {
-        const readable = getReadableError(error);
-        if (/Email or password does not match/i.test(readable)) {
-          throw new Error("Email or password does not match an active account.");
-        }
-        throw new Error(readable);
-      }
-    }
-
-    throw new Error("Email or password does not match an active account.");
+  async function resendConfirmation(email: string) {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { error } = await supabase.auth.resend({ type: "signup", email: email.trim().toLowerCase() });
+    if (error) throw new Error(getReadableError(error));
   }
 
   async function logout() {
-    clearLocalSession();
-    if (supabase) await supabase.auth.signOut();
-    if (auth) await signOut(auth);
+    window.localStorage.removeItem(LOCAL_SESSION_KEY);
+    if (supabase) {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw new Error(getReadableError(error));
+    }
     setState({ user: null, profile: null, loading: false, error: "" });
   }
 
-  return { ...state, login, logout };
-}
-
-export function getReadableError(error: unknown) {
-  const code = typeof error === "object" && error !== null && "code" in error
-    ? String((error as { code: unknown }).code)
-    : "";
-  const rawMessage = error instanceof Error ? error.message : String(error ?? "");
-
-  if (["auth/invalid-credential", "auth/user-not-found", "auth/wrong-password"].includes(code)) {
-    return "Email or password does not match an active account.";
-  }
-  if (["functions/internal", "internal", "internal [0]"].includes(code) || /internal\s*\[0\]|functions\/internal/i.test(rawMessage)) {
-    return "The Firebase backend is not ready for this login action. Use the local fallback or finish the Cloud Function setup.";
-  }
-  if (code === "auth/operation-not-allowed") {
-    return "Email and password sign-in is disabled in Firebase. Enable Email/Password under Authentication → Sign-in method.";
-  }
-  if (code === "auth/too-many-requests") {
-    return "Too many sign-in attempts. Wait a little, then try again.";
-  }
-  if (code === "auth/network-request-failed") {
-    return "Could not reach Firebase. Check your internet connection and try again.";
-  }
-  if (error instanceof Error) return error.message;
-  return "Something went wrong. Please try again.";
+  return { ...state, login, logout, resendConfirmation };
 }

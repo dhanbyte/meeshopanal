@@ -1,6 +1,5 @@
-import type { Timestamp } from "firebase/firestore";
-
 export type UserRole = "admin" | "staff" | "client";
+export type StoredDate = string | Date | null;
 
 export interface UserProfile {
   uid: string;
@@ -24,7 +23,7 @@ export interface Client {
   serviceFeePercent: number;
   openingBalance: number;
   active: boolean;
-  createdAt?: Timestamp | Date | null;
+  createdAt?: StoredDate;
 }
 
 export interface ClientBalance {
@@ -33,7 +32,7 @@ export interface ClientBalance {
   payable: number;
   receivable: number;
   cash: number;
-  updatedAt?: Timestamp | Date | null;
+  updatedAt?: StoredDate;
 }
 
 export interface ProductPriceDefault {
@@ -41,7 +40,7 @@ export interface ProductPriceDefault {
   sku: string;
   productName: string;
   unitCost: number;
-  updatedAt?: Timestamp | Date | null;
+  updatedAt?: StoredDate;
 }
 
 export type ShipmentStatus =
@@ -82,8 +81,8 @@ export interface Shipment {
   labelFileId?: string;
   labelProvider?: "firebase" | "imagekit";
   createdBy: string;
-  createdAt?: Timestamp | Date | null;
-  updatedAt?: Timestamp | Date | null;
+  createdAt?: StoredDate;
+  updatedAt?: StoredDate;
 }
 
 export type ReturnCondition = "sellable" | "damaged" | "wrong_item" | "missing_parts" | "quarantine" | "disposed";
@@ -115,7 +114,7 @@ export interface ReturnRecord {
   claimStatus: "not_raised" | "raised" | "approved" | "rejected";
   claimAmount: number;
   createdBy: string;
-  createdAt?: Timestamp | Date | null;
+  createdAt?: StoredDate;
 }
 
 export type LedgerType = "settlement" | "product_cost" | "shipping" | "return_charge" | "claim_recovery" | "service_fee" | "client_payment" | "client_receipt" | "shipment_charge" | "adjustment";
@@ -134,7 +133,7 @@ export interface LedgerEntry {
   description: string;
   reference?: string;
   createdBy: string;
-  createdAt?: Timestamp | Date | null;
+  createdAt?: StoredDate;
 }
 
 export interface WorkspaceData {

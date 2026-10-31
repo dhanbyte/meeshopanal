@@ -1,4 +1,4 @@
-# Parcel Desk · Meesho Operations
+# Parcel Desk ï¿½ Meesho Operations
 
 Responsive operations dashboard for managing Meesho client panels, shipments, returns, balances, and ledger activity in one place.
 
@@ -36,7 +36,9 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-The app uses Supabase Auth as the active login backend. The local admin fallback is available for quick access during setup.
+The app uses Supabase Auth and Supabase tables as the active backend. This deployment is configured as a fresh start: old Firebase records are not imported, and clients/orders should be created again in the panel.
+
+Client login creation and password resets use the `supabase/functions/admin-client-login` Edge Function. Deploy it with `supabase functions deploy admin-client-login`; its service-role key must remain a server-side secret. The function confirms managed client accounts automatically, so clients can sign in without waiting for an email confirmation. Client deletion is a soft delete (`active=false`) so its orders and ledger history remain available.
 
 ## Default admin login
 

@@ -152,7 +152,7 @@ export function ClientLoginModal({ client, onClose, onSaved }: { client: Client;
       <Field label="Login ID (email)" value={email} onChange={setEmail} type="email" required />
       <label className="form-field"><span className="field-label">{hasLogin ? "New password (optional)" : "Password"}</span><input className="input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={6} required={!hasLogin} placeholder={hasLogin ? "Leave blank to keep current password" : "At least 6 characters"} /></label>
       {password ? <label className="form-field"><span className="field-label">Confirm password</span><input className="input" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required /></label> : null}
-      <div className="hint-box"><Check size={16} /><span>Existing passwords cannot be viewed. Firebase Authentication manages passwords; they are never stored in the client record.</span></div>
+      <div className="hint-box"><Check size={16} /><span>Existing passwords cannot be viewed. Supabase Authentication manages passwords; they are never stored in the client record.</span></div>
       {error ? <FormError>{error}</FormError> : null}
       <ModalFooter onClose={onClose} busy={busy} action={hasLogin ? "Save login" : "Create client login"} />
     </form>}

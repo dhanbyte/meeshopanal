@@ -27,6 +27,10 @@ function toSupabaseRow<T extends Record<string, unknown>>(value: T): Record<stri
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [snakeCase(key), item])) as Record<string, unknown>;
 }
 
+function shipmentAmount(shipment: Shipment) {
+  return (shipment.items ?? []).reduce((total, item) => total + Math.max(0, Number(item.unitCost) || 0) * Math.max(0, Number(item.quantity) || 0), 0);
+}
+
 async function fetchRows<T>(table: string, filters: Array<{ column: string; op: "eq" | "in" | "gte" | "lt"; value: unknown }> = []) {
   if (!supabase) throw new Error("Supabase is not configured.");
   let query = supabase.from(table).select("*");
@@ -49,10 +53,10 @@ export async function loadWorkspaceSupabase(profile: UserProfile): Promise<Works
 
   const ids = profile.role === "admin" ? [] : clientIdsFor(profile);
   const clientsPromise = profile.role === "admin"
-    ? fetchRows<Client>("clients")
+    ? fetchRows<Client>("clients", [{ column: "active", op: "eq", value: true }])
     : ids.length === 0
       ? Promise.resolve([] as Client[])
-      : fetchRows<Client>("clients", [{ column: "id", op: "in", value: ids }]);
+      : fetchRows<Client>("clients", [{ column: "id", op: "in", value: ids }, { column: "active", op: "eq", value: true }]);
 
   const balancesPromise = profile.role === "admin"
     ? fetchRows<ClientBalance>("client_balances")
@@ -89,7 +93,34 @@ export async function loadWorkspaceSupabase(profile: UserProfile): Promise<Works
     productPriceDefaultsPromise,
   ]);
 
-  return { clients, balances, shipments, returns, ledgerEntries, productPriceDefaults };
+  const activeClientIds = new Set(clients.map((client) => client.id));
+  const activeShipments = shipments.filter((shipment) => activeClientIds.has(shipment.clientId));
+  const activeLedgerEntries = ledgerEntries.filter((entry) => activeClientIds.has(entry.clientId));
+  const calculatedBalances = clients.map((client) => {
+    const stored = balances.find((balance) => balance.clientId === client.id);
+    const shipmentReceivable = activeShipments
+      .filter((shipment) => shipment.clientId === client.id)
+      .reduce((total, shipment) => total + shipmentAmount(shipment), 0);
+    const ledgerReceivable = activeLedgerEntries
+      .filter((entry) => entry.clientId === client.id && entry.type !== "shipment_charge")
+      .reduce((total, entry) => total + Number(entry.receivableDelta ?? 0), 0);
+    return {
+      id: stored?.id ?? client.id,
+      clientId: client.id,
+      payable: Number(stored?.payable ?? 0),
+      receivable: shipmentReceivable + ledgerReceivable,
+      cash: Number(stored?.cash ?? 0),
+      updatedAt: stored?.updatedAt ?? null,
+    };
+  });
+  return {
+    clients,
+    balances: calculatedBalances,
+    shipments: activeShipments.map((shipment) => ({ ...shipment, clientAmountPosted: true })),
+    returns: returns.filter((record) => activeClientIds.has(record.clientId)),
+    ledgerEntries: activeLedgerEntries,
+    productPriceDefaults,
+  };
 }
 
 export async function loadClientHistorySupabase(clientId: string): Promise<{ shipments: Shipment[]; ledgerEntries: LedgerEntry[] }> {
@@ -106,19 +137,22 @@ export async function loadDailyActivitySupabase(profile: UserProfile, dateValue:
 
   const start = new Date(year, month - 1, day).toISOString();
   const end = new Date(year, month - 1, day + 1).toISOString();
-  const ids = profile.role === "admin" ? [] : clientIdsFor(profile);
-  if (profile.role !== "admin" && ids.length === 0) return { shipments: [], returns: [], ledgerEntries: [] };
+  const activeClients = profile.role === "admin"
+    ? await fetchRows<Client>("clients", [{ column: "active", op: "eq", value: true }])
+    : [];
+  const ids = profile.role === "admin" ? activeClients.map((client) => client.id) : clientIdsFor(profile);
+  if (ids.length === 0) return { shipments: [], returns: [], ledgerEntries: [] };
 
   const shipmentsPromise = profile.role === "admin"
-    ? fetchRows<Shipment>("shipments", [{ column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }])
+    ? fetchRows<Shipment>("shipments", [{ column: "client_id", op: "in", value: ids }, { column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }])
     : fetchRows<Shipment>("shipments", [{ column: "client_id", op: "in", value: ids }, { column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }]);
 
   const returnsPromise = profile.role === "admin"
-    ? fetchRows<ReturnRecord>("returns", [{ column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }])
+    ? fetchRows<ReturnRecord>("returns", [{ column: "client_id", op: "in", value: ids }, { column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }])
     : fetchRows<ReturnRecord>("returns", [{ column: "client_id", op: "in", value: ids }, { column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }]);
 
   const ledgerEntriesPromise = profile.role === "admin"
-    ? fetchRows<LedgerEntry>("ledger_entries", [{ column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }])
+    ? fetchRows<LedgerEntry>("ledger_entries", [{ column: "client_id", op: "in", value: ids }, { column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }])
     : fetchRows<LedgerEntry>("ledger_entries", [{ column: "client_id", op: "in", value: ids }, { column: "created_at", op: "gte", value: start }, { column: "created_at", op: "lt", value: end }]);
 
   const [shipments, returns, ledgerEntries] = await Promise.all([shipmentsPromise, returnsPromise, ledgerEntriesPromise]);
@@ -178,6 +212,16 @@ export async function createLedgerEntrySupabase(profile: UserProfile, input: Omi
   const row = toSupabaseRow({ ...input, id: crypto.randomUUID(), createdBy: profile.uid, createdAt: new Date().toISOString() });
   const { error } = await supabase.from("ledger_entries").insert(row);
   if (error) throw error;
+  const { data: currentBalance, error: balanceReadError } = await supabase.from("client_balances").select("*").eq("client_id", input.clientId).maybeSingle();
+  if (balanceReadError) throw balanceReadError;
+  const { error: balanceWriteError } = await supabase.from("client_balances").upsert({
+    client_id: input.clientId,
+    payable: Number(currentBalance?.payable ?? 0) + input.payableDelta,
+    receivable: Number(currentBalance?.receivable ?? 0) + input.receivableDelta,
+    cash: Number(currentBalance?.cash ?? 0) + input.cashDelta,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "client_id" });
+  if (balanceWriteError) throw balanceWriteError;
   return { id: row.id };
 }
 
@@ -210,20 +254,16 @@ export async function deleteLedgerEntrySupabase(id: string) {
 export async function deleteClientSupabase(id: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
 
-  const { error: deleteLedger } = await supabase.from("ledger_entries").delete().eq("client_id", id);
-  if (deleteLedger) throw deleteLedger;
-
-  const { error: deleteReturns } = await supabase.from("returns").delete().eq("client_id", id);
-  if (deleteReturns) throw deleteReturns;
-
-  const { error: deleteShipments } = await supabase.from("shipments").delete().eq("client_id", id);
-  if (deleteShipments) throw deleteShipments;
-
-  const { error: deleteBalance } = await supabase.from("client_balances").delete().eq("client_id", id);
-  if (deleteBalance) throw deleteBalance;
-
-  const { error: deleteClient } = await supabase.from("clients").delete().eq("id", id);
-  if (deleteClient) throw deleteClient;
+  const { error: ledgerError } = await supabase.from("ledger_entries").delete().eq("client_id", id);
+  if (ledgerError) throw ledgerError;
+  const { error: returnsError } = await supabase.from("returns").delete().eq("client_id", id);
+  if (returnsError) throw returnsError;
+  const { error: shipmentsError } = await supabase.from("shipments").delete().eq("client_id", id);
+  if (shipmentsError) throw shipmentsError;
+  const { error: balanceError } = await supabase.from("client_balances").delete().eq("client_id", id);
+  if (balanceError) throw balanceError;
+  const { error: clientError } = await supabase.from("clients").delete().eq("id", id);
+  if (clientError) throw clientError;
 }
 
 export async function deleteShipmentSupabase(id: string) {
