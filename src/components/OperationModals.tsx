@@ -351,15 +351,15 @@ export function EditShipmentModal({ shipment, onClose, onSaved }: { shipment: Sh
 type LedgerAction = "settlement" | "claim" | "payout" | "deduction" | "receivable" | "client-receipt" | "expense" | "adjustment-up" | "adjustment-down";
 
 const actionLabels: Record<LedgerAction, string> = {
-  settlement: "Meesho settlement received",
+  settlement: "Add money · Meesho settlement received",
   claim: "Claim recovery received",
   payout: "Paid to client",
-  deduction: "Deduct from client payable",
+  deduction: "Cut money · Deduct from client payable",
   receivable: "Client owes this amount",
   "client-receipt": "Payment received from client",
   expense: "Business expense (not charged to client)",
-  "adjustment-up": "Increase client payable",
-  "adjustment-down": "Decrease client payable",
+  "adjustment-up": "Add money · Increase client payable",
+  "adjustment-down": "Cut money · Decrease client payable",
 };
 
 export function LedgerModal({ clients, profile, onClose, onSaved, initialClientId = "", presetAction, dueFromClient = 0 }: { clients: Client[]; profile: UserProfile; onClose: () => void; onSaved: () => Promise<void>; initialClientId?: string; presetAction?: "client-receipt" | "receivable"; dueFromClient?: number }) {

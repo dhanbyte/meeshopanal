@@ -227,28 +227,16 @@ export async function createLedgerEntrySupabase(profile: UserProfile, input: Omi
 
 export async function deleteLedgerEntrySupabase(id: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { data: entryData, error: readError } = await supabase.from("ledger_entries").select("*").eq("id", id).maybeSingle();
-  if (readError) throw readError;
-  if (!entryData) return;
-
-  const entry = camelizeKeys(entryData) as LedgerEntry;
-  const { data: balanceData, error: balanceError } = await supabase.from("client_balances").select("*").eq("client_id", entry.clientId).maybeSingle();
-  if (balanceError) throw balanceError;
-
-  const currentBalance = balanceData ? (camelizeKeys(balanceData) as ClientBalance) : { clientId: entry.clientId, payable: 0, receivable: 0, cash: 0 };
-  const nextBalanceRow = {
-    client_id: entry.clientId,
-    payable: Number(currentBalance.payable ?? 0) - Number(entry.payableDelta ?? 0),
-    receivable: Number(currentBalance.receivable ?? 0) - Number(entry.receivableDelta ?? 0),
-    cash: Number(currentBalance.cash ?? 0) - Number(entry.cashDelta ?? 0),
-    updated_at: new Date().toISOString(),
-  };
-
-  const { error: balanceUpdateError } = await supabase.from("client_balances").upsert(nextBalanceRow, { onConflict: "client_id" });
-  if (balanceUpdateError) throw balanceUpdateError;
-
-  const { error: deleteError } = await supabase.from("ledger_entries").delete().eq("id", id);
-  if (deleteError) throw deleteError;
+  const { data, error } = await supabase.functions.invoke("admin-delete-ledger-entry", { body: { id } });
+  if (error) {
+    let message = error.message || "Could not remove this ledger entry.";
+    if (error.context instanceof Response) {
+      const body = await error.context.json().catch(() => null) as { error?: string } | null;
+      if (body?.error) message = body.error;
+    }
+    throw new Error(message);
+  }
+  if (!data?.deleted) throw new Error("The ledger entry was not removed.");
 }
 
 export async function deleteClientSupabase(id: string) {
