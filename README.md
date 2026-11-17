@@ -33,10 +33,10 @@ Create a `.env.local` file with the Supabase values:
 
 ```env
 VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your-public-key
 ```
 
-The browser uses only the Supabase URL and public anon key. Never put a service-role key in a `VITE_` variable or in this file.
+The browser uses only the Supabase URL and publishable key. Never put a `sb_secret_*` key or JWT signing secret in a `VITE_` variable, browser bundle, or source file.
 
 If Supabase is not configured, the app offers an offline demo login: `admin@gmail.com` / `admin123`. It opens the temporary sample workspace only. The demo credentials do not create or access Supabase accounts or live records. Configure Supabase before using the app for real client orders, returns, or wallet payments.
 
@@ -60,7 +60,14 @@ npx supabase link --project-ref YOUR_PROJECT_REF
 npx supabase functions deploy admin-client-login
 ```
 
-Configure `SUPABASE_SERVICE_ROLE_KEY` only as an Edge Function secret. Staff profiles and their client assignments belong in `profiles` and `staff_client_access`.
+Create a server-only API key named `parceldesk_edge` in **Project Settings → API Keys**. The two admin Edge Functions read that key from Supabase's runtime-provided `SUPABASE_SECRET_KEYS` map; never put its value in a `VITE_` variable or browser code. Deploy both functions after updating them:
+
+```sh
+npx supabase functions deploy admin-client-login
+npx supabase functions deploy admin-delete-ledger-entry
+```
+
+Staff profiles and their client assignments belong in `profiles` and `staff_client_access`.
 
 This is a clean Supabase start; old Firebase records are not imported. Keep an export of any existing records before switching the live workspace.
 

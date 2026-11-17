@@ -12,16 +12,26 @@ function response(body: Record<string, unknown>, status = 200) {
   });
 }
 
+function getAdminApiKey() {
+  try {
+    const keys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}") as Record<string, unknown>;
+    const key = keys.parceldesk_edge;
+    return typeof key === "string" ? key : "";
+  } catch {
+    return "";
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return response({ error: "Method not allowed." }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const secretKey = getAdminApiKey();
   const authorization = request.headers.get("Authorization");
-  if (!supabaseUrl || !serviceRoleKey || !authorization) return response({ error: "Supabase function is not configured." }, 500);
+  if (!supabaseUrl || !secretKey || !authorization) return response({ error: "Supabase function is not configured. Add the 'parceldesk_edge' secret API key." }, 500);
 
-  const adminClient = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const adminClient = createClient(supabaseUrl, secretKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const token = authorization.replace(/^Bearer\s+/i, "");
   const { data: actorResult, error: actorError } = await adminClient.auth.getUser(token);
   const actor = actorResult.user;

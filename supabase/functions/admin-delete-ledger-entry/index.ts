@@ -12,17 +12,27 @@ function respond(body: Record<string, unknown>, status = 200) {
   });
 }
 
+function getAdminApiKey() {
+  try {
+    const keys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}") as Record<string, unknown>;
+    const key = keys.parceldesk_edge;
+    return typeof key === "string" ? key : "";
+  } catch {
+    return "";
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return respond({ error: "Method not allowed." }, 405);
 
   const url = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const secretKey = getAdminApiKey();
+  const publishableKey = request.headers.get("apikey");
   const authorization = request.headers.get("Authorization");
-  if (!url || !serviceRoleKey || !anonKey || !authorization) return respond({ error: "Supabase function is not configured." }, 500);
+  if (!url || !secretKey || !publishableKey || !authorization) return respond({ error: "Supabase function is not configured. Add the 'parceldesk_edge' secret API key." }, 500);
 
-  const admin = createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const admin = createClient(url, secretKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const token = authorization.replace(/^Bearer\s+/i, "");
   const { data: actorResult, error: actorError } = await admin.auth.getUser(token);
   const actor = actorResult.user;
@@ -36,7 +46,7 @@ Deno.serve(async (request) => {
   const id = typeof body?.id === "string" ? body.id : "";
   if (!id) return respond({ error: "Ledger entry ID is required." }, 400);
 
-  const userClient = createClient(url, anonKey, { global: { headers: { Authorization: authorization } }, auth: { autoRefreshToken: false, persistSession: false } });
+  const userClient = createClient(url, publishableKey, { global: { headers: { Authorization: authorization } }, auth: { autoRefreshToken: false, persistSession: false } });
   const { data: reversalId, error: reversalError } = await userClient.rpc("reverse_ledger_entry", { p_entry_id: id, p_idempotency_key: crypto.randomUUID() });
   if (reversalError) return respond({ error: reversalError.message }, 400);
   return respond({ reversed: true, reversalId });
