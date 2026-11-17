@@ -1,4 +1,4 @@
-import { CircleHelp, CloudCog, ExternalLink, ShieldCheck } from "lucide-react";
+import { CircleHelp, ExternalLink, ShieldCheck } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useAuth } from "./lib/auth";
 import { isSupabaseReady } from "./lib/supabase";
@@ -14,7 +14,9 @@ export default function App() {
 
   if (demoMode) return <Workspace user={{ email: "demo@parceldesk.local" }} profile={demoProfile} onLogout={async () => setDemoMode(false)} demoMode />;
   if (!isSupabaseReady()) {
-    return <SetupCard icon={<CloudCog size={22} />} title="Add Supabase configuration" text="The app reads auth and workspace settings from the local .env.local file. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then restart the development server." onDemo={() => setDemoMode(true)} />;
+    if (authState.loading) return <div className="loading-screen"><span className="loader-mark" /><p>Opening your workspace…</p></div>;
+    if (!authState.user || !authState.profile) return <LoginScreen onLogin={authState.login} onResendConfirmation={authState.resendConfirmation} onDemo={() => setDemoMode(true)} localDemoMode />;
+    return <Workspace user={authState.user} profile={authState.profile} onLogout={authState.logout} demoMode />;
   }
   if (authState.loading) return <div className="loading-screen"><span className="loader-mark" /><p>Opening your workspace…</p></div>;
   if (!authState.user) return <LoginScreen onLogin={authState.login} onResendConfirmation={authState.resendConfirmation} onDemo={() => setDemoMode(true)} />;
@@ -26,5 +28,5 @@ export default function App() {
 }
 
 function SetupCard({ icon, title, text, detail, onDemo }: { icon: ReactNode; title: string; text: string; detail?: string; onDemo?: () => void }) {
-  return <main className="setup-page"><section className="setup-card"><span className="setup-icon">{icon}</span><span className="eyebrow">PARCEL DESK SETUP</span><h1>{title}</h1><p>{text}</p>{detail ? <code className="setup-code">{detail}</code> : null}<a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="button button-primary">Open Firebase Console <ExternalLink size={15} /></a>{onDemo ? <button className="button button-secondary setup-demo-button" type="button" onClick={onDemo}>Open demo workspace</button> : null}<small>See README.md for step-by-step setup and security rules.</small></section></main>;
+  return <main className="setup-page"><section className="setup-card"><span className="setup-icon">{icon}</span><span className="eyebrow">PARCEL DESK SETUP</span><h1>{title}</h1><p>{text}</p>{detail ? <code className="setup-code">{detail}</code> : null}<a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" className="button button-primary">Open Supabase Dashboard <ExternalLink size={15} /></a>{onDemo ? <button className="button button-secondary setup-demo-button" type="button" onClick={onDemo}>Open demo workspace</button> : null}<small>See README.md for the database and account setup steps.</small></section></main>;
 }

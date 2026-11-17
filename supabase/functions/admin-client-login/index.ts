@@ -25,10 +25,11 @@ Deno.serve(async (request) => {
   const token = authorization.replace(/^Bearer\s+/i, "");
   const { data: actorResult, error: actorError } = await adminClient.auth.getUser(token);
   const actor = actorResult.user;
-  const isConfiguredAdmin = actor?.email?.toLowerCase() === "admin@gmail.com";
-  if (actorError || !actor || ((!isConfiguredAdmin && actor.user_metadata?.role !== "admin") || actor.user_metadata?.active === false)) {
+  if (actorError || !actor) {
     return response({ error: "Only an active administrator can manage client logins." }, 403);
   }
+  const { data: actorProfile, error: actorProfileError } = await adminClient.from("profiles").select("role, active").eq("id", actor.id).maybeSingle();
+  if (actorProfileError || actorProfile?.role !== "admin" || actorProfile.active !== true) return response({ error: "Only an active administrator can manage client logins." }, 403);
 
   const body = await request.json().catch(() => null);
   const clientId = typeof body?.clientId === "string" ? body.clientId : "";
@@ -38,7 +39,7 @@ Deno.serve(async (request) => {
     return response({ error: "Client ID and a valid email are required." }, 400);
   }
 
-  const { data: client, error: clientError } = await adminClient.from("clients").select("id, name, business_name, contact_name, auth_uid").eq("id", clientId).maybeSingle();
+  const { data: client, error: clientError } = await adminClient.from("clients").select("id, name, business_name, contact_name, auth_uid, active").eq("id", clientId).maybeSingle();
   if (clientError) return response({ error: clientError.message }, 500);
   if (!client) return response({ error: "This client record does not exist." }, 404);
 
@@ -75,5 +76,14 @@ Deno.serve(async (request) => {
 
   const { error: updateError } = await adminClient.from("clients").update({ login_email: email, auth_uid: uid }).eq("id", clientId);
   if (updateError) return response({ error: updateError.message }, 500);
+  const { error: profileError } = await adminClient.from("profiles").upsert({
+    id: uid,
+    role: "client",
+    active: client.active === true,
+    name: client.contact_name || client.business_name || client.name,
+    client_id: client.id,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "id" });
+  if (profileError) return response({ error: profileError.message }, 500);
   return response({ uid });
 });

@@ -1,7 +1,7 @@
 import { Check, Copy, FileImage, FileVideo, KeyRound, LoaderCircle, Plus, UploadCloud, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { ReactNode } from "react";
-import { createClient, createLedgerEntry, createReturnRecord, deleteUploadedFile, getProtectedFileUrl, IMAGEKIT_UPLOAD_ENABLED, newReturnId, normalizeAwb, updateClientDetails, updateShipmentDetails, uploadReturnFile } from "../lib/data";
+import { createClient, createLedgerEntry, createReturnRecord, deleteUploadedFile, getProtectedFileUrl, PRIVATE_STORAGE_ENABLED, newReturnId, normalizeAwb, updateClientDetails, updateShipmentDetails, uploadReturnFile } from "../lib/data";
 import { saveClientLogin } from "../lib/clientLogin";
 import type { Client, EvidenceFile, LedgerType, ReturnCondition, Shipment, UserProfile } from "../lib/types";
 
@@ -213,13 +213,9 @@ export function ReturnModal({ clients, shipments, profile, onClose, onSaved }: {
     let recordSaved = false;
     try {
       const id = newReturnId();
-      const allFiles = IMAGEKIT_UPLOAD_ENABLED ? [...photos, ...(video ? [video] : [])] : [];
+      const allFiles = PRIVATE_STORAGE_ENABLED ? [...photos, ...(video ? [video] : [])] : [];
       for (const file of allFiles) {
-        try {
-          evidence.push(await uploadReturnFile(clientId, id, file));
-        } catch (issue) {
-          console.warn("ImageKit return upload failed; saving return without media.", issue);
-        }
+        evidence.push(await uploadReturnFile(clientId, id, file));
       }
       await createReturnRecord(profile, {
         clientId,
@@ -233,7 +229,7 @@ export function ReturnModal({ clients, shipments, profile, onClose, onSaved }: {
         condition,
         notes: notes.trim(),
         evidence,
-        sharedWithClient: true,
+        sharedWithClient: false,
         claimStatus: "not_raised",
         claimAmount: 0,
       }, id);
@@ -248,7 +244,7 @@ export function ReturnModal({ clients, shipments, profile, onClose, onSaved }: {
     }
   }
 
-  return <Modal title="Record a return" description={IMAGEKIT_UPLOAD_ENABLED ? "Attach the return parcel photos and one continuous unboxing video." : "Save the return details now; photo and video storage is on hold."} onClose={onClose} wide>
+  return <Modal title="Record a return" description={PRIVATE_STORAGE_ENABLED ? "Attach optional return parcel photos and an unboxing video." : "Supabase private storage is not configured; return evidence cannot be uploaded."} onClose={onClose} wide>
     <form className="modal-form" onSubmit={submit}>
       <div className="form-grid">
         <label className="form-field"><span className="field-label">Tracking ID / AWB</span><input className="input" value={trackingIdInput} onChange={(event) => setTrackingIdInput(event.target.value)} placeholder="Paste tracking ID or AWB" /></label>
@@ -260,13 +256,13 @@ export function ReturnModal({ clients, shipments, profile, onClose, onSaved }: {
       {selectedShipment ? <div className="linked-order"><strong>{selectedShipment.customerName}</strong><span>{selectedShipment.items.map((item) => `${item.productName} × ${item.quantity}`).join(" · ")}</span><span>Order {selectedShipment.orderNumber} · AWB {selectedShipment.awb}</span></div> : null}
       <label className="form-field"><span className="field-label">Inspection result</span><select className="input" value={condition} onChange={(event) => setCondition(event.target.value as ReturnCondition)}><option value="quarantine">Needs inspection / quarantine</option><option value="sellable">Sellable / restock</option><option value="damaged">Damaged</option><option value="wrong_item">Wrong item received</option><option value="missing_parts">Missing parts</option><option value="disposed">Disposed</option></select></label>
       <label className="form-field"><span className="field-label">Notes</span><textarea className="input textarea" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Describe the parcel and product condition." /></label>
-      {IMAGEKIT_UPLOAD_ENABLED ? <>
+      {PRIVATE_STORAGE_ENABLED ? <>
         <div className="evidence-inputs">
           <label className="evidence-drop"><FileImage size={19} /><strong>Return photos</strong><span>{photos.length ? `${photos.length} photo(s) selected` : "Choose one or more images"}</span><input type="file" accept="image/*" multiple onChange={(event) => setPhotos(Array.from(event.target.files ?? []))} /></label>
           <label className="evidence-drop"><FileVideo size={19} /><strong>Unboxing video</strong><span>{video ? video.name : "Choose one continuous video"}</span><input type="file" accept="video/*" onChange={(event) => setVideo(event.target.files?.[0] ?? null)} /></label>
         </div>
         <div className="hint-box"><UploadCloud size={16} /><span>Evidence is stored in the client’s private folder. The client can view it after the record is saved.</span></div>
-      </> : <div className="hint-box"><UploadCloud size={16} /><span>Photo and video storage is on hold. Return details can still be saved without media; no files will be uploaded.</span></div>}
+      </> : <div className="hint-box"><UploadCloud size={16} /><span>Supabase private storage is not configured. Return details can still be saved without media; no files will be uploaded.</span></div>}
       {error ? <FormError>{error}</FormError> : null}
       <ModalFooter onClose={onClose} busy={busy} action={busy ? "Uploading evidence…" : "Save return"} />
     </form>
@@ -370,6 +366,7 @@ export function LedgerModal({ clients, profile, onClose, onSaved, initialClientI
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const requestKey = useRef({ fingerprint: "", id: crypto.randomUUID() });
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -389,9 +386,11 @@ export function LedgerModal({ clients, profile, onClose, onSaved, initialClientI
       "adjustment-up": { type: "adjustment", direction: "in", payableDelta: value, receivableDelta: 0, cashDelta: 0 },
       "adjustment-down": { type: "adjustment", direction: "out", payableDelta: -value, receivableDelta: 0, cashDelta: 0 },
     };
+    const fingerprint = JSON.stringify([clientId, action, value, description.trim(), reference.trim()]);
+    if (requestKey.current.fingerprint !== fingerprint) requestKey.current = { fingerprint, id: crypto.randomUUID() };
     setBusy(true);
     try {
-      await createLedgerEntry(profile, { clientId, ...actionData[action], amount: value, description: description.trim(), reference: reference.trim() });
+      await createLedgerEntry(profile, { clientId, ...actionData[action], amount: value, description: description.trim(), reference: reference.trim() }, requestKey.current.id);
       await onSaved();
       onClose();
     } catch (issue) {

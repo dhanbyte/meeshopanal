@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import type { Client, ClientBalance, LedgerEntry, ProductPriceDefault, ReturnRecord, Shipment, UserProfile, WorkspaceData } from "./types";
+import type { Client, ClientBalance, EvidenceFile, LedgerEntry, ProductPriceDefault, ReturnRecord, Shipment, UserProfile, WorkspaceData } from "./types";
 
 function clientIdsFor(profile: UserProfile): string[] {
   if (profile.role === "client") return profile.clientId ? [profile.clientId] : [];
@@ -27,25 +27,52 @@ function toSupabaseRow<T extends Record<string, unknown>>(value: T): Record<stri
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [snakeCase(key), item])) as Record<string, unknown>;
 }
 
-function shipmentAmount(shipment: Shipment) {
-  return (shipment.items ?? []).reduce((total, item) => total + Math.max(0, Number(item.unitCost) || 0) * Math.max(0, Number(item.quantity) || 0), 0);
-}
-
 async function fetchRows<T>(table: string, filters: Array<{ column: string; op: "eq" | "in" | "gte" | "lt"; value: unknown }> = []) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  let query = supabase.from(table).select("*");
-
-  for (const filter of filters) {
-    if (filter.op === "eq") query = query.eq(filter.column, filter.value as never);
-    if (filter.op === "in") query = query.in(filter.column, filter.value as never[]);
-    if (filter.op === "gte") query = query.gte(filter.column, filter.value as never);
-    if (filter.op === "lt") query = query.lt(filter.column, filter.value as never);
-  }
-
   const sortColumn = table === "client_balances" || table === "product_price_defaults" ? "updated_at" : "created_at";
-  const { data, error } = await query.order(sortColumn, { ascending: false, nullsFirst: false }).limit(500);
+  const rows: T[] = [];
+  for (let offset = 0; ; offset += 500) {
+    let query = supabase.from(table).select("*");
+    for (const filter of filters) {
+      if (filter.op === "eq") query = query.eq(filter.column, filter.value as never);
+      if (filter.op === "in") query = query.in(filter.column, filter.value as never[]);
+      if (filter.op === "gte") query = query.gte(filter.column, filter.value as never);
+      if (filter.op === "lt") query = query.lt(filter.column, filter.value as never);
+    }
+    const { data, error } = await query.order(sortColumn, { ascending: false, nullsFirst: false }).range(offset, offset + 499);
+    if (error) throw error;
+    rows.push(...(data ?? []).map((row) => camelizeKeys(row) as T));
+    if ((data?.length ?? 0) < 500) return rows;
+  }
+}
+
+function safeFileName(name: string) {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120) || "upload";
+}
+
+export async function uploadSupabaseFile(bucket: "labels" | "return-evidence", clientId: string, recordId: string, file: File): Promise<EvidenceFile> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const maxSize = bucket === "labels" ? 25 * 1024 * 1024 : 300 * 1024 * 1024;
+  if (file.size <= 0 || file.size > maxSize) throw new Error(`Choose a file smaller than ${bucket === "labels" ? "25 MB" : "300 MB"}.`);
+  if (bucket === "labels" && !(file.type === "application/pdf" || file.type === "image/jpeg" || file.type === "image/png")) throw new Error("Labels must be a PDF, JPG or PNG.");
+  if (bucket === "return-evidence" && !(file.type.startsWith("image/") || file.type.startsWith("video/"))) throw new Error("Return evidence must be a photo or video.");
+  const path = `${clientId}/${recordId}/${Date.now()}-${crypto.randomUUID()}-${safeFileName(file.name)}`;
+  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
   if (error) throw error;
-  return (data ?? []).map((row) => camelizeKeys(row)) as T[];
+  return { name: file.name, path, provider: "supabase", bucket, contentType: file.type || "application/octet-stream", size: file.size };
+}
+
+export async function removeSupabaseFile(bucket: "labels" | "return-evidence", path: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { error } = await supabase.storage.from(bucket).remove([path]);
+  if (error) throw error;
+}
+
+export async function downloadSupabaseFile(bucket: "labels" | "return-evidence", path: string) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.storage.from(bucket).download(path);
+  if (error) throw error;
+  return URL.createObjectURL(data);
 }
 
 export async function loadWorkspaceSupabase(profile: UserProfile): Promise<WorkspaceData> {
@@ -53,7 +80,7 @@ export async function loadWorkspaceSupabase(profile: UserProfile): Promise<Works
 
   const ids = profile.role === "admin" ? [] : clientIdsFor(profile);
   const clientsPromise = profile.role === "admin"
-    ? fetchRows<Client>("clients", [{ column: "active", op: "eq", value: true }])
+    ? fetchRows<Client>("clients")
     : ids.length === 0
       ? Promise.resolve([] as Client[])
       : fetchRows<Client>("clients", [{ column: "id", op: "in", value: ids }, { column: "active", op: "eq", value: true }]);
@@ -93,31 +120,18 @@ export async function loadWorkspaceSupabase(profile: UserProfile): Promise<Works
     productPriceDefaultsPromise,
   ]);
 
-  const activeClientIds = new Set(clients.map((client) => client.id));
-  const activeShipments = shipments.filter((shipment) => activeClientIds.has(shipment.clientId));
-  const activeLedgerEntries = ledgerEntries.filter((entry) => activeClientIds.has(entry.clientId));
+  const clientIds = new Set(clients.map((client) => client.id));
+  const activeShipments = shipments.filter((shipment) => clientIds.has(shipment.clientId));
+  const activeLedgerEntries = ledgerEntries.filter((entry) => clientIds.has(entry.clientId));
   const calculatedBalances = clients.map((client) => {
     const stored = balances.find((balance) => balance.clientId === client.id);
-    const shipmentReceivable = activeShipments
-      .filter((shipment) => shipment.clientId === client.id)
-      .reduce((total, shipment) => total + shipmentAmount(shipment), 0);
-    const ledgerReceivable = activeLedgerEntries
-      .filter((entry) => entry.clientId === client.id && entry.type !== "shipment_charge")
-      .reduce((total, entry) => total + Number(entry.receivableDelta ?? 0), 0);
-    return {
-      id: stored?.id ?? client.id,
-      clientId: client.id,
-      payable: Number(stored?.payable ?? 0),
-      receivable: shipmentReceivable + ledgerReceivable,
-      cash: Number(stored?.cash ?? 0),
-      updatedAt: stored?.updatedAt ?? null,
-    };
+    return { id: client.id, clientId: client.id, payable: stored?.payable ?? 0, receivable: stored?.receivable ?? 0, cash: stored?.cash ?? 0, updatedAt: stored?.updatedAt ?? null };
   });
   return {
     clients,
     balances: calculatedBalances,
     shipments: activeShipments.map((shipment) => ({ ...shipment, clientAmountPosted: true })),
-    returns: returns.filter((record) => activeClientIds.has(record.clientId)),
+    returns: returns.filter((record) => clientIds.has(record.clientId)),
     ledgerEntries: activeLedgerEntries,
     productPriceDefaults,
   };
@@ -176,141 +190,88 @@ export async function createClientSupabase(input: Omit<Client, "id" | "createdAt
 
 export async function updateClientDetailsSupabase(id: string, patch: Pick<Client, "name" | "businessName" | "panelName" | "contactName" | "phone" | "email" | "serviceFeePercent" | "active">) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.from("clients").update(toSupabaseRow(patch)).eq("id", id);
+  const { error } = await supabase.rpc("update_client_details", { p_client_id: id, p_patch: patch });
   if (error) throw error;
 }
 
 export async function createShipmentSupabase(profile: UserProfile, shipment: Omit<Shipment, "id" | "createdAt" | "updatedAt" | "createdBy" | "labelUrl" | "labelPath">, labelFile: File, shipmentId?: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
+  void profile;
   const id = shipmentId ?? crypto.randomUUID();
-  const createdAt = new Date().toISOString();
-  const row = toSupabaseRow({
-    ...shipment,
-    id,
-    createdBy: profile.uid,
-    createdAt,
-    updatedAt: createdAt,
-    labelFileId: labelFile?.name ? undefined : undefined,
-    labelUrl: undefined,
-    labelPath: undefined,
+  const label = labelFile?.size ? await uploadSupabaseFile("labels", shipment.clientId, id, labelFile) : null;
+  const { data, error } = await supabase.rpc("create_shipment_with_charge", {
+    p_id: id,
+    p_shipment: shipment,
+    p_label: label ? { path: label.path, name: label.name } : null,
   });
-  const { error } = await supabase.from("shipments").insert(row);
-  if (error) throw error;
-  return id;
+  if (error) {
+    if (label) await removeSupabaseFile("labels", label.path).catch(() => undefined);
+    throw error;
+  }
+  return String(data ?? id);
 }
 
 export async function createReturnRecordSupabase(profile: UserProfile, record: Omit<ReturnRecord, "id" | "createdAt" | "createdBy">, id: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const row = toSupabaseRow({ ...record, id, createdBy: profile.uid, createdAt: new Date().toISOString() });
-  const { error } = await supabase.from("returns").insert(row);
+  void profile;
+  const { error } = await supabase.rpc("create_return_record", { p_id: id, p_record: record });
   if (error) throw error;
   return id;
 }
 
-export async function createLedgerEntrySupabase(profile: UserProfile, input: Omit<LedgerEntry, "id" | "createdAt" | "createdBy">) {
+export async function createLedgerEntrySupabase(profile: UserProfile, input: Omit<LedgerEntry, "id" | "createdAt" | "createdBy">, idempotencyKey: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const row = toSupabaseRow({ ...input, id: crypto.randomUUID(), createdBy: profile.uid, createdAt: new Date().toISOString() });
-  const { error } = await supabase.from("ledger_entries").insert(row);
+  void profile;
+  const { data, error } = await supabase.rpc("record_ledger_entry", {
+    p_client_id: input.clientId,
+    p_type: input.type,
+    p_amount: input.amount,
+    p_direction: input.direction,
+    p_payable_delta: input.payableDelta,
+    p_receivable_delta: input.receivableDelta,
+    p_cash_delta: input.cashDelta,
+    p_description: input.description,
+    p_reference: input.reference || null,
+    p_shipment_id: input.shipmentId || null,
+    p_idempotency_key: idempotencyKey,
+  });
   if (error) throw error;
-  const { data: currentBalance, error: balanceReadError } = await supabase.from("client_balances").select("*").eq("client_id", input.clientId).maybeSingle();
-  if (balanceReadError) throw balanceReadError;
-  const { error: balanceWriteError } = await supabase.from("client_balances").upsert({
-    client_id: input.clientId,
-    payable: Number(currentBalance?.payable ?? 0) + input.payableDelta,
-    receivable: Number(currentBalance?.receivable ?? 0) + input.receivableDelta,
-    cash: Number(currentBalance?.cash ?? 0) + input.cashDelta,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "client_id" });
-  if (balanceWriteError) throw balanceWriteError;
-  return { id: row.id };
+  return { id: String(data) };
 }
 
 export async function deleteLedgerEntrySupabase(id: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { data, error } = await supabase.functions.invoke("admin-delete-ledger-entry", { body: { id } });
-  if (error) {
-    let message = error.message || "Could not remove this ledger entry.";
-    if (error.context instanceof Response) {
-      const body = await error.context.json().catch(() => null) as { error?: string } | null;
-      if (body?.error) message = body.error;
-    }
-    throw new Error(message);
-  }
-  if (!data?.deleted) throw new Error("The ledger entry was not removed.");
+  const { error } = await supabase.rpc("reverse_ledger_entry", { p_entry_id: id, p_idempotency_key: crypto.randomUUID() });
+  if (error) throw error;
 }
 
 export async function deleteClientSupabase(id: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
-
-  const { error: ledgerError } = await supabase.from("ledger_entries").delete().eq("client_id", id);
-  if (ledgerError) throw ledgerError;
-  const { error: returnsError } = await supabase.from("returns").delete().eq("client_id", id);
-  if (returnsError) throw returnsError;
-  const { error: shipmentsError } = await supabase.from("shipments").delete().eq("client_id", id);
-  if (shipmentsError) throw shipmentsError;
-  const { error: balanceError } = await supabase.from("client_balances").delete().eq("client_id", id);
-  if (balanceError) throw balanceError;
-  const { error: clientError } = await supabase.from("clients").delete().eq("id", id);
-  if (clientError) throw clientError;
+  const { error } = await supabase.rpc("archive_client", { p_client_id: id });
+  if (error) throw error;
 }
 
 export async function deleteShipmentSupabase(id: string) {
   if (!supabase) throw new Error("Supabase is not configured.");
-
-  const { data: shipmentData, error: shipmentReadError } = await supabase.from("shipments").select("*").eq("id", id).maybeSingle();
-  if (shipmentReadError) throw shipmentReadError;
-  if (!shipmentData) return;
-
-  const shipment = camelizeKeys(shipmentData) as Shipment;
-  const { data: linkedEntries, error: linkedEntryError } = await supabase.from("ledger_entries").select("*").eq("shipment_id", id);
-  if (linkedEntryError) throw linkedEntryError;
-
-  const entries = (linkedEntries ?? []).map((entry) => camelizeKeys(entry) as LedgerEntry);
-  const balanceResult = await supabase.from("client_balances").select("*").eq("client_id", shipment.clientId).maybeSingle();
-  if (balanceResult.error) throw balanceResult.error;
-
-  const currentBalance = balanceResult.data ? (camelizeKeys(balanceResult.data) as ClientBalance) : { clientId: shipment.clientId, payable: 0, receivable: 0, cash: 0 };
-  const receivableReduction = entries.reduce((sum, entry) => sum + Number(entry.receivableDelta ?? 0), 0);
-  const payableReduction = entries.reduce((sum, entry) => sum + Number(entry.payableDelta ?? 0), 0);
-  const cashReduction = entries.reduce((sum, entry) => sum + Number(entry.cashDelta ?? 0), 0);
-
-  const { error: balanceUpdateError } = await supabase.from("client_balances").upsert({
-    client_id: shipment.clientId,
-    payable: Number(currentBalance.payable ?? 0) - payableReduction,
-    receivable: Number(currentBalance.receivable ?? 0) - receivableReduction,
-    cash: Number(currentBalance.cash ?? 0) - cashReduction,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "client_id" });
-  if (balanceUpdateError) throw balanceUpdateError;
-
-  const { error: returnDeleteError } = await supabase.from("returns").delete().eq("shipment_id", id);
-  if (returnDeleteError) throw returnDeleteError;
-
-  const { error: ledgerDeleteError } = await supabase.from("ledger_entries").delete().eq("shipment_id", id);
-  if (ledgerDeleteError) throw ledgerDeleteError;
-
-  const { error: shipmentDeleteError } = await supabase.from("shipments").delete().eq("id", id);
-  if (shipmentDeleteError) throw shipmentDeleteError;
+  const { error } = await supabase.rpc("delete_shipment", { p_shipment_id: id });
+  if (error) throw error;
 }
 
 export async function updateReturnRecordSupabase(id: string, patch: Partial<ReturnRecord>) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.from("returns").update(toSupabaseRow(patch as Record<string, unknown>)).eq("id", id);
+  const { error } = await supabase.rpc("update_return_record", { p_return_id: id, p_patch: patch });
   if (error) throw error;
 }
 
 export async function updateShipmentStatusSupabase(id: string, status: Shipment["status"]) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.from("shipments").update({ status, updated_at: new Date().toISOString() }).eq("id", id);
+  const { error } = await supabase.rpc("update_shipment_status", { p_shipment_id: id, p_status: status });
   if (error) throw error;
 }
 
 export async function updateShipmentDetailsSupabase(id: string, patch: Pick<Shipment, "orderNumber" | "subOrderNumber" | "courier" | "customerName" | "customerAddress" | "customerPhone" | "items" | "invoiceTotal" | "status">) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.from("shipments").update({
-    ...toSupabaseRow(patch as Record<string, unknown>),
-    updated_at: new Date().toISOString(),
-  }).eq("id", id);
+  const { error } = await supabase.rpc("update_shipment_details", { p_shipment_id: id, p_patch: patch });
   if (error) throw error;
 }
 

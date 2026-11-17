@@ -28,7 +28,7 @@ export function todayInputValue() {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-export function DashboardPage({ clients, balances, shipments, returns, ledgerEntries, dailyActivity, dailyLoading = false, selectedDate, onDateChange, onGoOrders }: {
+export function DashboardPage({ clients, balances, shipments, returns, ledgerEntries, dailyActivity, dailyLoading = false, selectedDate, onDateChange, onGoOrders, profileRole = "admin" }: {
   clients: Client[];
   balances: ClientBalance[];
   shipments: Shipment[];
@@ -39,6 +39,7 @@ export function DashboardPage({ clients, balances, shipments, returns, ledgerEnt
   selectedDate: string;
   onDateChange: (value: string) => void;
   onGoOrders: () => void;
+  profileRole?: string;
 }) {
   const dailyShipments = dailyActivity?.shipments ?? shipments.filter((shipment) => dayMatches(shipment.createdAt, selectedDate));
   const dailyReturns = dailyActivity?.returns ?? returns.filter((record) => dayMatches(record.createdAt, selectedDate));
@@ -48,8 +49,43 @@ export function DashboardPage({ clients, balances, shipments, returns, ledgerEnt
   const payable = balances.reduce((sum, balance) => sum + balance.payable, 0);
   const receivable = clients.reduce((sum, client) => sum + clientPendingAmount(client.id, shipments, balances), 0);
   const waitingInspection = returns.filter((record) => record.condition === "quarantine").length;
+  const ownBalance = balances[0] ?? { payable: 0, receivable: 0 };
+  const recentEntries = [...ledgerEntries].sort((left, right) => (timestampDate(right.createdAt)?.getTime() ?? 0) - (timestampDate(left.createdAt)?.getTime() ?? 0)).slice(0, 5);
 
   return <div className="page-stack">
+    {profileRole === "client" ? (
+      <section className="panel-card">
+        <div className="panel-heading">
+          <div><span className="eyebrow">MY WALLET</span><h3>Account balance</h3><p>Orders, returns and payment entries linked to your panel.</p></div>
+          <WalletCards size={22} />
+        </div>
+        <div className="stat-grid stat-grid-three">
+          <StatCard label="Available for payout" value={formatMoney(ownBalance.payable)} detail="Parcel Desk owes you" icon={<ArrowDownLeft size={18} />} tone="green" />
+          <StatCard label="Due from you" value={formatMoney(ownBalance.receivable)} detail="Open product and account charges" icon={<ArrowUpRightFromSquare size={18} />} tone="amber" />
+          <StatCard label="Orders tracked" value={String(shipments.length)} detail={`${returns.length} return${returns.length === 1 ? "" : "s"} recorded`} icon={<PackageCheck size={18} />} tone="blue" />
+        </div>
+        <div className="client-detail-section">
+          <h3>Recent account activity</h3>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Activity</th><th>Details</th><th>Cash movement</th><th>Date</th></tr></thead>
+              <tbody>
+                {recentEntries.map((entry) => (
+                  <tr key={entry.id}>
+                    <td>{ledgerLabel(entry)}</td><td>{entry.description}</td>
+                    <td className={entry.cashDelta < 0 ? "money-negative" : entry.cashDelta > 0 ? "money-positive" : ""}>
+                      {entry.cashDelta ? `${entry.cashDelta > 0 ? "+" : "−"}${formatMoney(Math.abs(entry.cashDelta))}` : "—"}
+                    </td>
+                    <td>{formatDate(entry.createdAt)}</td>
+                  </tr>
+                ))}
+                {!recentEntries.length ? <tr><td colSpan={4}>No account activity yet.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    ) : null}
     <div className="daily-toolbar"><div><span className="eyebrow">DAILY REPORT</span><h2>What moved today?</h2><p>Orders and money entries created on this date. Balances show current totals.{dailyLoading ? " Updating report…" : ""}</p></div><label className="date-field"><span>Date</span><input className="input" type="date" value={selectedDate} onChange={(event) => onDateChange(event.target.value)} /></label></div>
     <div className="stat-grid">
       <StatCard label="Labels added" value={String(dailyShipments.length)} detail="Uploaded on selected date" icon={<PackageOpen size={19} />} tone="blue" />
@@ -75,7 +111,7 @@ export function DashboardPage({ clients, balances, shipments, returns, ledgerEnt
         {clients.length === 0 ? <tr><td colSpan={6}><EmptyState title="No clients yet" text="Add your first client to start tracking panels and balances." /></td></tr> : null}
       </tbody></table></div>
     </section>
-    <p className="data-note">Reports use up to the latest 500 records per section. Invoice totals are reference only; record actual Meesho settlements in Money.</p>
+    <p className="data-note">Invoice totals are reference only; record actual Meesho settlements in Money.</p>
   </div>;
 }
 
@@ -111,7 +147,7 @@ export function OrdersPage({ shipments, clients, canManage, canUpload = canManag
         {filtered.map((shipment) => {
           const client = clients.find((row) => row.id === shipment.clientId);
           return <tr key={shipment.id}>
-            <td><div className="table-primary">{shipment.customerName || "Customer not captured"}</div><div className="table-secondary">{shipment.orderNumber}{shipment.subOrderNumber ? ` · ${shipment.subOrderNumber}` : ""}</div><div className="table-tertiary record-id-text" title={shipment.id}>Firestore ID · {shipment.id}</div><div className="table-tertiary truncate-address">{shipment.customerAddress}</div></td>
+            <td><div className="table-primary">{shipment.customerName || "Customer not captured"}</div><div className="table-secondary">{shipment.orderNumber}{shipment.subOrderNumber ? ` · ${shipment.subOrderNumber}` : ""}</div><div className="table-tertiary record-id-text" title={shipment.id}>Order record ID · {shipment.id}</div><div className="table-tertiary truncate-address">{shipment.customerAddress}</div></td>
             <td><div className="table-primary">{shipment.items[0]?.productName ?? "—"}</div><div className="table-secondary">{shipment.items[0]?.sku || "No SKU"}{shipment.items.length > 1 ? ` · +${shipment.items.length - 1} more` : ""} · Qty {shipment.items.reduce((sum, item) => sum + item.quantity, 0)}</div></td>
             <td><div className="table-primary">{client?.name ?? shipment.clientName ?? "Unknown client"}</div><div className="table-secondary">{client?.panelName ?? ""}</div></td>
             <td><span className="mono-chip">{shipment.awb}</span>{shipment.courier ? <div className="table-secondary">{shipment.courier}</div> : null}</td>
@@ -253,7 +289,7 @@ function ClientDetailsModal({ client, shipments, ledgerEntries, clientBalance, c
           <div><small>Password</small><strong>{client.authUid ? "Hidden · reset with admin control" : "No linked login"}</strong></div>
           <div><small>Meesho panel</small><strong>{client.panelName}</strong></div>
           <div><small>Client record ID</small><strong className="mono-chip">{client.id}</strong></div>
-          <div><small>Firebase login UID</small><strong className="mono-chip">{client.authUid || "Not linked"}</strong></div>
+          <div><small>Supabase login UID</small><strong className="mono-chip">{client.authUid || "Not linked"}</strong></div>
           <div><small>{dueFromClient < 0 ? "Client credit" : "Pending from client"}</small><strong>{formatMoney(Math.abs(dueFromClient))}</strong></div>
           <div><small>Due to client</small><strong>{formatMoney(dueToClient)}</strong></div>
         </div>
@@ -276,7 +312,8 @@ function ClientDetailsModal({ client, shipments, ledgerEntries, clientBalance, c
   </div>;
 }
 
-export function LedgerPage({ clients, balances, shipments, entries, dailyEntries, dailyLoading = false, selectedDate, onDateChange, canAdd, onAdd, onDelete }: { clients: Client[]; balances: ClientBalance[]; shipments: Shipment[]; entries: LedgerEntry[]; dailyEntries?: LedgerEntry[]; dailyLoading?: boolean; selectedDate: string; onDateChange: (value: string) => void; canAdd: boolean; onAdd: () => void; onDelete?: (entry: LedgerEntry) => void }) {
+export function LedgerPage({ clients, balances, shipments, entries, dailyEntries, dailyLoading = false, selectedDate, onDateChange, canAdd, onAdd, onDelete, profileRole = "admin" }: { clients: Client[]; balances: ClientBalance[]; shipments: Shipment[]; entries: LedgerEntry[]; dailyEntries?: LedgerEntry[]; dailyLoading?: boolean; selectedDate: string; onDateChange: (value: string) => void; canAdd: boolean; onAdd: () => void; onDelete?: (entry: LedgerEntry) => void; profileRole?: string }) {
+  const isClient = profileRole === "client";
   const [clientFilter, setClientFilter] = useState("all");
   const filtered = (dailyEntries ?? entries.filter((entry) => dayMatches(entry.createdAt, selectedDate))).filter((entry) => clientFilter === "all" || entry.clientId === clientFilter);
   const cashIn = filtered.reduce((sum, entry) => sum + Math.max(entry.cashDelta, 0), 0);
@@ -285,16 +322,16 @@ export function LedgerPage({ clients, balances, shipments, entries, dailyEntries
   const totalReceivable = clients.filter((client) => clientFilter === "all" || client.id === clientFilter).reduce((sum, client) => sum + clientPendingAmount(client.id, shipments, balances), 0);
 
   return <div className="page-stack">
-    <div className="page-toolbar"><div className="toolbar-description"><span className="eyebrow">CLIENT MONEY LEDGER</span><strong>Track settlements, deductions and payouts.</strong></div>{canAdd ? <button className="button button-primary" type="button" onClick={onAdd}><Plus size={17} />Add money entry</button> : null}</div>
+    <div className="page-toolbar"><div className="toolbar-description"><span className="eyebrow">{isClient ? "MY WALLET" : "CLIENT MONEY LEDGER"}</span><strong>{isClient ? "Your payout and payment history." : "Track settlements, deductions and payouts."}</strong></div>{canAdd ? <button className="button button-primary" type="button" onClick={onAdd}><Plus size={17} />Add money entry</button> : null}</div>
     <div className="ledger-filters"><label className="filter-select"><span>Client</span><select className="input" value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}><option value="all">All clients</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="date-field"><span>Activity date{dailyLoading ? " · updating" : ""}</span><input className="input" type="date" value={selectedDate} onChange={(event) => onDateChange(event.target.value)} /></label></div>
-    <div className="stat-grid stat-grid-four"><StatCard label="Received that day" value={formatMoney(cashIn)} detail="Cash received / settlements" icon={<ArrowDownLeft size={19} />} tone="green" /><StatCard label="Paid that day" value={formatMoney(cashOut)} detail="Cash paid out" icon={<ArrowUpRight size={19} />} tone="rose" /><StatCard label="Current due to clients" value={formatMoney(totalPayable)} detail="Current payable balance" icon={<WalletCards size={19} />} tone="blue" /><StatCard label="Current due from clients" value={formatMoney(totalReceivable)} detail="Current receivable balance" icon={<ClipboardList size={19} />} tone="amber" /></div>
+    <div className="stat-grid stat-grid-four"><StatCard label="Received that day" value={formatMoney(cashIn)} detail={isClient ? "Payments recorded for your account" : "Cash received / settlements"} icon={<ArrowDownLeft size={19} />} tone="green" /><StatCard label="Paid that day" value={formatMoney(cashOut)} detail={isClient ? "Payouts recorded for your account" : "Cash paid out"} icon={<ArrowUpRight size={19} />} tone="rose" /><StatCard label={isClient ? "Available for payout" : "Current due to clients"} value={formatMoney(totalPayable)} detail="Current payable balance" icon={<WalletCards size={19} />} tone="blue" /><StatCard label={isClient ? "Due from you" : "Current due from clients"} value={formatMoney(totalReceivable)} detail="Current receivable balance" icon={<ClipboardList size={19} />} tone="amber" /></div>
     <section className="panel-card table-panel"><div className="panel-heading"><div><h3>Money entries</h3><p>{filtered.length} {filtered.length === 1 ? "entry" : "entries"} on {formatInputDate(selectedDate)}</p></div><span className="date-range-chip">Actual cash movement is tracked separately from balance changes</span></div>
       <div className="table-wrap"><table className="data-table"><thead><tr><th>Client / panel</th><th>Entry</th><th>Reference</th><th>Cash flow</th><th>Payable change</th><th>Receivable change</th><th>Recorded</th>{onDelete ? <th>Action</th> : null}</tr></thead><tbody>{filtered.map((entry) => {
         const client = clients.find((row) => row.id === entry.clientId);
-        return <tr key={entry.id}><td><div className="table-primary">{client?.name ?? "Unknown client"}</div><div className="table-secondary">{client?.panelName ?? ""}</div></td><td><div className="table-primary">{ledgerLabel(entry)}</div><div className="table-secondary">{entry.description}</div></td><td>{entry.reference || "—"}</td><td className={entry.cashDelta >= 0 ? "money-positive" : "money-negative"}>{entry.cashDelta === 0 ? "—" : `${entry.cashDelta > 0 ? "+" : "−"}${formatMoney(Math.abs(entry.cashDelta))}`}</td><td>{formatDelta(entry.payableDelta)}</td><td>{formatDelta(entry.receivableDelta)}</td><td>{formatDate(entry.createdAt)}</td>{onDelete ? <td><button className="button button-secondary button-small danger-button" type="button" onClick={() => onDelete(entry)}>Remove</button></td> : null}</tr>;
+        return <tr key={entry.id}><td><div className="table-primary">{client?.name ?? "Unknown client"}</div><div className="table-secondary">{client?.panelName ?? ""}</div></td><td><div className="table-primary">{ledgerLabel(entry)}</div><div className="table-secondary">{entry.description}</div></td><td>{entry.reference || "—"}</td><td className={entry.cashDelta >= 0 ? "money-positive" : "money-negative"}>{entry.cashDelta === 0 ? "—" : `${entry.cashDelta > 0 ? "+" : "−"}${formatMoney(Math.abs(entry.cashDelta))}`}</td><td>{formatDelta(entry.payableDelta)}</td><td>{formatDelta(entry.receivableDelta)}</td><td>{formatDate(entry.createdAt)}</td>{onDelete ? <td><button className="button button-secondary button-small danger-button" type="button" onClick={() => onDelete(entry)}>Reverse</button></td> : null}</tr>;
       })}{filtered.length === 0 ? <tr><td colSpan={onDelete ? 8 : 7}><EmptyState title="No entries for this date" text="Record the Meesho settlement, client payout or deduction when it happens." action={canAdd ? onAdd : undefined} /></td></tr> : null}</tbody></table></div>
     </section>
-    <p className="data-note">Ledger entries can be added or removed when needed. Use a correction entry if you want to keep the audit trail clear.</p>
+    <p className="data-note">{isClient ? "Your account history is read-only. Contact the operations team if a balance needs review." : "Corrections create a separate ledger entry so the original payment history remains available."}</p>
   </div>;
 }
 

@@ -2,44 +2,35 @@ import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import type { UserProfile } from "./types";
 
-const LOCAL_SESSION_KEY = "parcelDeskLocalSession";
 const LOCAL_ADMIN_EMAIL = "admin@gmail.com";
 const LOCAL_ADMIN_PASSWORD = "admin123";
+const LOCAL_SESSION_KEY = "parcelDeskLocalSession";
+const LOCAL_ADMIN_PROFILE: UserProfile = { uid: "local-demo-admin", name: "Local demo admin", role: "admin", active: true, clientIds: [] };
 
-function localProfile(): UserProfile {
-  return { uid: "admin-local-uid", name: "Admin", role: "admin", active: true };
+function localDemoUser() {
+  return { uid: LOCAL_ADMIN_PROFILE.uid, email: LOCAL_ADMIN_EMAIL, displayName: LOCAL_ADMIN_PROFILE.name, emailVerified: true };
 }
 
-function localUser(email: string) {
-  return { uid: "admin-local-uid", email, displayName: "Admin", emailVerified: true };
-}
-
-function profileFor(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }, role: "admin" | "staff" | "client", clientId?: string): UserProfile {
+function profileFor(user: { id: string; email?: string | null }, profile: { role: "admin" | "staff" | "client"; active: boolean; name?: string | null; client_id?: string | null }) {
   return {
     uid: user.id,
-    name: typeof user.user_metadata?.name === "string" ? user.user_metadata.name : user.email || "Supabase user",
-    role,
-    active: user.user_metadata?.active !== false,
-    clientId: clientId || (typeof user.user_metadata?.clientId === "string" ? user.user_metadata.clientId : undefined),
-    clientIds: Array.isArray(user.user_metadata?.clientIds) ? user.user_metadata.clientIds as string[] : undefined,
+    name: profile.name || user.email || "Supabase user",
+    role: profile.role,
+    active: profile.active,
+    clientId: profile.client_id || undefined,
   };
 }
 
 async function resolveProfile(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }) {
-  const metadataRole = user.user_metadata?.role;
-  if (metadataRole === "admin" || metadataRole === "staff") {
-    return profileFor(user, metadataRole);
-  }
-
   if (!supabase) return null;
-  const { data, error } = await supabase.from("clients").select("id, name, active").eq("auth_uid", user.id).maybeSingle();
+  const { data, error } = await supabase.from("profiles").select("role, active, name, client_id").eq("id", user.id).maybeSingle();
   if (error) throw error;
-  if (!data) return null;
-  return {
-    ...profileFor(user, "client", data.id),
-    name: data.name || profileFor(user, "client", data.id).name,
-    active: data.active === true,
-  };
+  if (!data || data.active !== true) return null;
+  const profile = profileFor(user, data);
+  if (profile.role !== "staff") return profile as UserProfile;
+  const { data: assignments, error: assignmentError } = await supabase.from("staff_client_access").select("client_id").eq("staff_id", user.id);
+  if (assignmentError) throw assignmentError;
+  return { ...profile, clientIds: (assignments ?? []).map((row) => row.client_id) } as UserProfile;
 }
 
 export interface AuthState {
@@ -59,6 +50,9 @@ export function getReadableError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (/invalid login credentials/i.test(message)) return "Email or password does not match an active account.";
   if (/email not confirmed/i.test(message)) return "Email not confirmed. Ask an administrator to reset this client login from the panel.";
+  if (/failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(message)) {
+    return "Cannot reach Supabase Auth. Check that VITE_SUPABASE_URL points to an active project and that your internet connection is available.";
+  }
   return message || "Something went wrong. Please try again.";
 }
 
@@ -68,12 +62,14 @@ export function useAuth() {
   useEffect(() => {
     if (!supabase) {
       try {
-        const saved = window.localStorage.getItem(LOCAL_SESSION_KEY);
-        if (saved) setState({ user: localUser(LOCAL_ADMIN_EMAIL), profile: localProfile(), loading: false, error: "" });
-        else setState({ user: null, profile: null, loading: false, error: "Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY." });
+        if (window.localStorage.getItem(LOCAL_SESSION_KEY)) {
+          setState({ user: localDemoUser(), profile: LOCAL_ADMIN_PROFILE, loading: false, error: "" });
+          return;
+        }
       } catch {
-        setState({ user: null, profile: null, loading: false, error: "Supabase is not configured." });
+        // Private browsing may block local storage; sign-in still works for this tab.
       }
+      setState({ user: null, profile: null, loading: false, error: "" });
       return;
     }
 
@@ -119,25 +115,31 @@ export function useAuth() {
 
   async function login(email: string, password: string) {
     const normalizedEmail = email.trim().toLowerCase();
-    if (normalizedEmail === LOCAL_ADMIN_EMAIL && password === LOCAL_ADMIN_PASSWORD && !supabase) {
-      window.localStorage.setItem(LOCAL_SESSION_KEY, "true");
-      setState({ user: localUser(normalizedEmail), profile: localProfile(), loading: false, error: "" });
+    if (!supabase) {
+      if (normalizedEmail !== LOCAL_ADMIN_EMAIL || password !== LOCAL_ADMIN_PASSWORD) {
+        throw new Error("Email or password does not match the local demo admin account.");
+      }
+      try { window.localStorage.setItem(LOCAL_SESSION_KEY, "true"); } catch { /* Keep the signed-in state for this tab. */ }
+      setState({ user: localDemoUser(), profile: LOCAL_ADMIN_PROFILE, loading: false, error: "" });
       return;
     }
-    if (!supabase) throw new Error("Supabase is not configured.");
-    const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
-    if (error) throw new Error(getReadableError(error));
-    if (!data.user) throw new Error("No active account was returned.");
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+      if (error) throw error;
+      if (!data.user) throw new Error("No active account was returned.");
+    } catch (error) {
+      throw new Error(getReadableError(error));
+    }
   }
 
   async function resendConfirmation(email: string) {
-    if (!supabase) throw new Error("Supabase is not configured.");
+    if (!supabase) throw new Error("Email confirmation is unavailable in local demo mode.");
     const { error } = await supabase.auth.resend({ type: "signup", email: email.trim().toLowerCase() });
     if (error) throw new Error(getReadableError(error));
   }
 
   async function logout() {
-    window.localStorage.removeItem(LOCAL_SESSION_KEY);
+    try { window.localStorage.removeItem(LOCAL_SESSION_KEY); } catch { /* Ignore unavailable local storage. */ }
     if (supabase) {
       const { error } = await supabase.auth.signOut();
       if (error) throw new Error(getReadableError(error));

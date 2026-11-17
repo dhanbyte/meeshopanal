@@ -6,9 +6,10 @@ interface LoginScreenProps {
   onLogin: (email: string, password: string) => Promise<void>;
   onResendConfirmation: (email: string) => Promise<void>;
   onDemo: () => void;
+  localDemoMode?: boolean;
 }
 
-export function LoginScreen({ onLogin, onResendConfirmation, onDemo }: LoginScreenProps) {
+export function LoginScreen({ onLogin, onResendConfirmation, onDemo, localDemoMode = false }: LoginScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -67,8 +68,8 @@ export function LoginScreen({ onLogin, onResendConfirmation, onDemo }: LoginScre
           </button>
         </form>
         <button className="button button-secondary button-full demo-entry" type="button" onClick={onDemo}>Open demo dashboard<ArrowRight size={17} /></button>
-        <p className="demo-hint">Sample client included. Label OCR runs in this browser; demo records stay temporary and never go to Firebase.</p>
-        <div className="auth-note"><LockKeyhole size={15} /><span>Private workspace. Admins create accounts; public sign-up is disabled.</span></div>
+        <p className="demo-hint">{localDemoMode ? <>Local demo admin: <strong>admin@gmail.com</strong> / <strong>admin123</strong>. Sample records stay temporary in this browser; configure Supabase for the real workspace.</> : "Sample client included. Label OCR runs in this browser; demo records stay temporary and separate from your workspace."}</p>
+        <div className="auth-note"><LockKeyhole size={15} /><span>{localDemoMode ? "Local demo access only. Supabase roles and records are used when Supabase is configured." : "Private workspace. Admins create accounts; public sign-up is disabled."}</span></div>
       </section>
       <div className="auth-decoration" aria-hidden="true"><span className="decor-circle decor-one" /><span className="decor-circle decor-two" /><div className="decor-copy"><span>One view for every client</span><strong>Orders, returns and balances—kept in sync.</strong></div></div>
     </main>

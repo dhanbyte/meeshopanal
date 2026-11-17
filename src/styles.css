@@ -99,6 +99,7 @@ a { color: inherit; }
 .date-field, .filter-select { display: flex; flex-direction: column; gap: 6px; color: #8e99a8; font-size: 10px; font-weight: 600; white-space: nowrap; }
 .date-field .input, .filter-select .input { min-width: 145px; height: 36px; }
 .stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; }
+.stat-grid-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .stat-grid-secondary { margin-top: -4px; }
 .stat-grid-four { grid-template-columns: repeat(4, minmax(0,1fr)); }
 .stat-card { min-height: 112px; display: flex; align-items: flex-start; gap: 13px; padding: 18px 16px; border: 1px solid #e9edf2; border-radius: 12px; background: #fff; box-shadow: 0 2px 8px rgba(35,52,76,.018); }

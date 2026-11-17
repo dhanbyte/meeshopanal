@@ -18,10 +18,9 @@ import {
   type QueryConstraint,
 } from "firebase/firestore";
 import { deleteObject, getBlob, ref } from "firebase/storage";
-import { deleteImageKitAsset, getImageKitReturnUrl, uploadToImageKit } from "./imagekit";
 import { requireFirebase } from "./firebase";
 import { supabase } from "./supabase";
-import { createClientSupabase, createLedgerEntrySupabase, createReturnRecordSupabase, createShipmentSupabase, deleteClientSupabase, deleteLedgerEntrySupabase, deleteShipmentSupabase, loadClientHistorySupabase, loadDailyActivitySupabase, loadWorkspaceSupabase, saveProductPriceDefaultSupabase, updateClientDetailsSupabase, updateReturnRecordSupabase, updateShipmentDetailsSupabase, updateShipmentStatusSupabase } from "./supabaseData";
+import { createClientSupabase, createLedgerEntrySupabase, createReturnRecordSupabase, createShipmentSupabase, deleteClientSupabase, deleteLedgerEntrySupabase, deleteShipmentSupabase, downloadSupabaseFile, loadClientHistorySupabase, loadDailyActivitySupabase, loadWorkspaceSupabase, removeSupabaseFile, saveProductPriceDefaultSupabase, updateClientDetailsSupabase, updateReturnRecordSupabase, updateShipmentDetailsSupabase, updateShipmentStatusSupabase, uploadSupabaseFile } from "./supabaseData";
 import type { Client, ClientBalance, EvidenceFile, LedgerEntry, ProductPriceDefault, ReturnRecord, Shipment, ShipmentItem, UserProfile, WorkspaceData } from "./types";
 
 const PAGE_LIMIT = 500;
@@ -196,14 +195,7 @@ async function readProductPriceDefaults(profile: UserProfile): Promise<ProductPr
 
 export async function loadWorkspace(profile: UserProfile): Promise<WorkspaceData> {
   if (supabase) {
-    try {
-      if (profile.role === "admin") {
-        await syncLegacyWorkspaceToSupabase(profile);
-      }
-      return await loadWorkspaceSupabase(profile);
-    } catch (error) {
-      console.warn("Supabase workspace load failed; falling back to Firestore.", error);
-    }
+    return loadWorkspaceSupabase(profile);
   }
 
   const [clients, balances, shipments, returns, ledgerEntries, productPriceDefaults] = await Promise.all([
@@ -219,11 +211,7 @@ export async function loadWorkspace(profile: UserProfile): Promise<WorkspaceData
 
 export async function loadClientHistory(clientId: string): Promise<{ shipments: Shipment[]; ledgerEntries: LedgerEntry[] }> {
   if (supabase) {
-    try {
-      return await loadClientHistorySupabase(clientId);
-    } catch (error) {
-      console.warn("Supabase client history load failed; falling back to Firestore.", error);
-    }
+    return loadClientHistorySupabase(clientId);
   }
   if (!clientId) throw new Error("Choose a client to load its history.");
   const { db } = requireFirebase();
@@ -258,12 +246,7 @@ export async function saveProductPriceDefault(profile: UserProfile, input: { sku
   if (!Number.isFinite(input.unitCost) || input.unitCost <= 0) throw new Error("Enter a product cost greater than zero to save it as a default.");
 
   if (supabase) {
-    try {
-      const result = await saveProductPriceDefaultSupabase(profile, input);
-      return result;
-    } catch (error) {
-      console.warn("Supabase saveProductPriceDefault failed; falling back to local/Firestore.", error);
-    }
+    return saveProductPriceDefaultSupabase(profile, input);
   }
 
   const { db } = requireFirebase();
@@ -286,11 +269,7 @@ export async function saveProductPriceDefault(profile: UserProfile, input: { sku
 
 export async function loadDailyActivity(profile: UserProfile, dateValue: string): Promise<Pick<WorkspaceData, "shipments" | "returns" | "ledgerEntries">> {
   if (supabase) {
-    try {
-      return await loadDailyActivitySupabase(profile, dateValue);
-    } catch (error) {
-      console.warn("Supabase daily activity load failed; falling back to Firestore.", error);
-    }
+    return loadDailyActivitySupabase(profile, dateValue);
   }
 
   const { db } = requireFirebase();
@@ -325,11 +304,7 @@ export async function loadDailyActivity(profile: UserProfile, dateValue: string)
 
 export async function createClient(input: Omit<Client, "id" | "createdAt">, createdBy: string) {
   if (supabase) {
-    try {
-      return await createClientSupabase(input, createdBy);
-    } catch (error) {
-      console.warn("Supabase createClient failed; falling back to Firestore.", error);
-    }
+    return createClientSupabase(input, createdBy);
   }
 
   const { db } = requireFirebase();
@@ -347,12 +322,7 @@ export async function updateClientDetails(
   patch: Pick<Client, "name" | "businessName" | "panelName" | "contactName" | "phone" | "email" | "serviceFeePercent" | "active">,
 ) {
   if (supabase) {
-    try {
-      await updateClientDetailsSupabase(id, patch);
-      return;
-    } catch (error) {
-      console.warn("Supabase updateClientDetails failed; falling back to Firestore.", error);
-    }
+    return updateClientDetailsSupabase(id, patch);
   }
 
   const { db } = requireFirebase();
@@ -381,10 +351,10 @@ async function awbDocumentId(awb: string) {
 }
 
 export async function uploadLabel(clientId: string, shipmentId: string, file: File): Promise<EvidenceFile> {
-  return uploadToImageKit(clientId, shipmentId, file, "labels");
+  return uploadSupabaseFile("labels", clientId, shipmentId, file);
 }
 
-export const IMAGEKIT_UPLOAD_ENABLED = import.meta.env.VITE_IMAGEKIT_UPLOAD_ENABLED === "true";
+export const PRIVATE_STORAGE_ENABLED = Boolean(supabase);
 
 export function newShipmentId() {
   if (supabase) return crypto.randomUUID();
@@ -399,11 +369,7 @@ export async function createShipment(
   shipmentId?: string,
 ) {
   if (supabase) {
-    try {
-      return await createShipmentSupabase(profile, shipment, labelFile, shipmentId);
-    } catch (error) {
-      console.warn("Supabase createShipment failed; falling back to Firestore.", error);
-    }
+    return createShipmentSupabase(profile, shipment, labelFile, shipmentId);
   }
 
   const { db } = requireFirebase();
@@ -419,7 +385,7 @@ export async function createShipment(
     throw new Error(`This AWB already exists under ${details.clientName ?? "another order"} (${details.orderNumber ?? "order details unavailable"}).`);
   }
 
-  const uploadedLabel = IMAGEKIT_UPLOAD_ENABLED
+  const uploadedLabel = PRIVATE_STORAGE_ENABLED
     ? await uploadLabel(shipment.clientId, shipmentRef.id, labelFile)
     : undefined;
   try {
@@ -488,12 +454,7 @@ export async function createShipment(
 }
 
 export async function uploadReturnFile(clientId: string, returnId: string, file: File): Promise<EvidenceFile> {
-  if (!IMAGEKIT_UPLOAD_ENABLED) throw new Error("Return photo and video storage is on hold until ImageKit setup is enabled.");
-  if (!(file.type.startsWith("image/") || file.type.startsWith("video/"))) {
-    throw new Error("Return evidence must be a photo or video.");
-  }
-  if (file.size > 300 * 1024 * 1024) throw new Error("Return video is too large (maximum 300 MB).");
-  return uploadToImageKit(clientId, returnId, file, "returns");
+  return uploadSupabaseFile("return-evidence", clientId, returnId, file);
 }
 
 export async function createReturnRecord(
@@ -502,11 +463,8 @@ export async function createReturnRecord(
   id: string,
 ) {
   if (supabase) {
-    try {
-      return await createReturnRecordSupabase(profile, record, id);
-    } catch (error) {
-      console.warn("Supabase createReturnRecord failed; falling back to Firestore.", error);
-    }
+    await createReturnRecordSupabase(profile, record, id);
+    return id;
   }
 
   const { db } = requireFirebase();
@@ -524,9 +482,14 @@ export async function createReturnRecord(
 }
 
 export async function deleteUploadedFile(file: EvidenceFile, clientId: string) {
-  if (file.provider === "imagekit" && file.fileId) {
-    await deleteImageKitAsset(clientId, file.fileId);
+  void clientId;
+  if (file.provider === "supabase") {
+    if (!file.bucket) throw new Error("This file does not have a Supabase bucket. Re-upload it before removing it.");
+    await removeSupabaseFile(file.bucket, file.path);
     return;
+  }
+  if (file.provider === "imagekit" && file.fileId) {
+    throw new Error("ImageKit evidence cannot be managed from the Supabase workspace.");
   }
   const { storage } = requireFirebase();
   await deleteObject(ref(storage, file.path));
@@ -540,12 +503,7 @@ export function newReturnId() {
 
 export async function updateReturnRecord(id: string, patch: Partial<ReturnRecord>) {
   if (supabase) {
-    try {
-      await updateReturnRecordSupabase(id, patch);
-      return;
-    } catch (error) {
-      console.warn("Supabase updateReturnRecord failed; falling back to Firestore.", error);
-    }
+    return updateReturnRecordSupabase(id, patch);
   }
 
   const { db } = requireFirebase();
@@ -555,13 +513,10 @@ export async function updateReturnRecord(id: string, patch: Partial<ReturnRecord
 export async function createLedgerEntry(
   profile: UserProfile,
   input: Omit<LedgerEntry, "id" | "createdAt" | "createdBy">,
+  idempotencyKey = crypto.randomUUID(),
 ) {
   if (supabase) {
-    try {
-      return await createLedgerEntrySupabase(profile, input);
-    } catch (error) {
-      console.warn("Supabase createLedgerEntry failed; falling back to Firestore.", error);
-    }
+    return createLedgerEntrySupabase(profile, input, idempotencyKey);
   }
 
   const { db } = requireFirebase();
@@ -613,12 +568,7 @@ export async function deleteLedgerEntry(id: string) {
 
 export async function deleteClient(id: string) {
   if (supabase) {
-    try {
-      await deleteClientSupabase(id);
-      return;
-    } catch (error) {
-      console.warn("Supabase deleteClient failed; falling back to Firestore.", error);
-    }
+    return deleteClientSupabase(id);
   }
 
   const { db } = requireFirebase();
@@ -642,12 +592,7 @@ export async function deleteClient(id: string) {
 
 export async function deleteShipment(id: string) {
   if (supabase) {
-    try {
-      await deleteShipmentSupabase(id);
-      return;
-    } catch (error) {
-      console.warn("Supabase deleteShipment failed; falling back to Firestore.", error);
-    }
+    return deleteShipmentSupabase(id);
   }
 
   const { db } = requireFirebase();
@@ -682,8 +627,13 @@ export async function deleteShipment(id: string) {
 }
 
 export async function getProtectedFileUrl(returnId: string, file: EvidenceFile) {
+  void returnId;
+  if (file.provider === "supabase") {
+    if (!file.bucket) throw new Error("This evidence file is missing its storage bucket information.");
+    return downloadSupabaseFile(file.bucket, file.path);
+  }
   if (file.provider === "imagekit" && file.fileId) {
-    return getImageKitReturnUrl(returnId, file.fileId);
+    throw new Error("ImageKit evidence cannot be viewed from the Supabase workspace.");
   }
   const { storage } = requireFirebase();
   const blob = await getBlob(ref(storage, file.path));
@@ -692,12 +642,7 @@ export async function getProtectedFileUrl(returnId: string, file: EvidenceFile) 
 
 export async function updateShipmentStatus(id: string, status: Shipment["status"]) {
   if (supabase) {
-    try {
-      await updateShipmentStatusSupabase(id, status);
-      return;
-    } catch (error) {
-      console.warn("Supabase updateShipmentStatus failed; falling back to Firestore.", error);
-    }
+    return updateShipmentStatusSupabase(id, status);
   }
 
   const { db } = requireFirebase();
@@ -709,12 +654,7 @@ export async function updateShipmentDetails(
   patch: Pick<Shipment, "orderNumber" | "subOrderNumber" | "courier" | "customerName" | "customerAddress" | "customerPhone" | "items" | "invoiceTotal" | "status">,
 ) {
   if (supabase) {
-    try {
-      await updateShipmentDetailsSupabase(id, patch);
-      return;
-    } catch (error) {
-      console.warn("Supabase updateShipmentDetails failed; falling back to Firestore.", error);
-    }
+    return updateShipmentDetailsSupabase(id, patch);
   }
 
   const { db } = requireFirebase();

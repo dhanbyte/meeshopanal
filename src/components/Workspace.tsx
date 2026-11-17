@@ -53,8 +53,12 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
   const canDeleteOwnOrders = !demoMode && profile.role === "client";
   const canUpload = canManage || demoMode;
   const canAdmin = !demoMode && profile.role === "admin";
-  const nav = profile.role === "client" ? navItems.filter((item) => item.id !== "clients") : navItems;
-  const pageInfo = titles[page];
+  const nav = profile.role === "client"
+    ? navItems.filter((item) => item.id !== "clients").map((item) => item.id === "ledger" ? { ...item, label: "My wallet" } : item)
+    : navItems;
+  const pageInfo = profile.role === "client" && page === "ledger"
+    ? { title: "My wallet", subtitle: "See your current balance and account history." }
+    : titles[page];
 
   const refresh = useCallback(async (quiet = false) => {
     if (demoMode) {
@@ -139,25 +143,25 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
   async function handleDeleteLedgerEntry(entry: LedgerEntry) {
     try {
       const clientName = data.clients.find((client) => client.id === entry.clientId)?.name ?? "this client";
-      const confirmed = window.confirm(`Remove this ledger entry for ${clientName}?`);
+      const confirmed = window.confirm(`Add a correcting entry to reverse this payment for ${clientName}? The original entry will stay in the history.`);
       if (!confirmed) return;
       await deleteLedgerEntry(entry.id);
       await refresh(true);
       await refreshDaily(selectedDate);
-      showNotice("Ledger entry removed.");
+      showNotice("Correction added. The original ledger entry stays in the history.");
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : "Ledger entry could not be removed.");
     }
   }
 
   async function handleDeleteClient(client: Client) {
-    const confirmed = window.confirm(`Permanently delete ${client.businessName || client.name}? This will remove the client, orders, returns, balances and ledger history and cannot be undone.`);
+    const confirmed = window.confirm(`Archive ${client.businessName || client.name}? Sign-in will be disabled while all orders, returns, balances and payment history stay saved.`);
     if (!confirmed) return;
     try {
       await deleteClient(client.id);
       await refresh(true);
       await refreshDaily(selectedDate);
-      showNotice("Client and all related data deleted.");
+      showNotice("Client archived. All records and wallet history were kept.");
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : "Client could not be removed.");
     }
@@ -235,11 +239,11 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
 
   function pageContent() {
     if (loading) return <div className="loading-panel"><span className="loader-mark" /><span>Loading your latest records…</span></div>;
-    if (page === "dashboard") return <DashboardPage clients={data.clients} balances={data.balances} shipments={data.shipments} returns={data.returns} ledgerEntries={data.ledgerEntries} dailyActivity={demoMode ? undefined : dailyActivity} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} onGoOrders={() => navigate("orders")} />;
+    if (page === "dashboard") return <DashboardPage clients={data.clients} balances={data.balances} shipments={data.shipments} returns={data.returns} ledgerEntries={data.ledgerEntries} dailyActivity={demoMode ? undefined : dailyActivity} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} onGoOrders={() => navigate("orders")} profileRole={profile.role} />;
     if (page === "orders") return <OrdersPage shipments={data.shipments} clients={data.clients} canManage={canManage} canUpload={canUpload} search={search} onSearch={setSearch} onUpload={() => setUploadOpen(true)} onStatusChange={(id, status) => void handleStatusChange(id, status)} onEdit={setEditingShipment} onDelete={canManage || canDeleteOwnOrders ? handleDeleteShipment : undefined} busyId={busyShipmentId} />;
     if (page === "returns") return <ReturnsPage returns={data.returns} clients={data.clients} canManage={canManage} profileRole={profile.role} onAdd={() => setReturnOpen(true)} onView={(record, fileIndex) => setSelectedEvidence({ returnId: record.id, file: record.evidence[fileIndex] })} onShare={(record) => void handleShare(record)} onClaimUpdate={(id, status) => void handleClaimUpdate(id, status)} />;
     if (page === "clients") return <ClientsPage clients={data.clients} balances={data.balances} shipments={data.shipments} ledgerEntries={data.ledgerEntries} canAdd={canAdmin} canRecordPayment={canAdmin} onAdd={() => setClientOpen(true)} onRecordPayment={openClientPayment} onEditClient={setEditingClient} onManageLogin={setLoginClient} onDeleteClient={canAdmin ? handleDeleteClient : undefined} />;
-    return <LedgerPage clients={data.clients} balances={data.balances} shipments={data.shipments} entries={data.ledgerEntries} dailyEntries={demoMode ? undefined : dailyActivity.ledgerEntries} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} canAdd={canManage} onAdd={openLedgerEntry} onDelete={canAdmin ? handleDeleteLedgerEntry : undefined} />;
+    return <LedgerPage clients={data.clients} balances={data.balances} shipments={data.shipments} entries={data.ledgerEntries} dailyEntries={demoMode ? undefined : dailyActivity.ledgerEntries} dailyLoading={dailyLoading} selectedDate={selectedDate} onDateChange={setSelectedDate} canAdd={canManage} onAdd={openLedgerEntry} onDelete={canAdmin ? handleDeleteLedgerEntry : undefined} profileRole={profile.role} />;
   }
 
   return <div className="app-shell">
@@ -258,7 +262,7 @@ export function Workspace({ user, profile, onLogout, demoMode = false }: { user:
     </aside>
     <main className="main-area">
       <header className="topbar"><div className="topbar-leading"><button className="mobile-menu icon-button" type="button" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={20} /></button><div className="breadcrumb"><span>Workspace</span><b>/</b><strong>{pageInfo.title}</strong></div></div><div className="topbar-actions"><label className="global-search"><Search size={16} /><input aria-label="Search all orders" value={search} onChange={(event) => { setSearch(event.target.value); if (event.target.value) setPage("orders"); }} placeholder="Search order, AWB, SKU…" /><kbd>⌘ K</kbd></label><button className={`icon-button notification-button ${countOpenReturns ? "has-dot" : ""}`} type="button" onClick={() => navigate("returns")} aria-label={`${countOpenReturns} returns need inspection`}><Bell size={18} /></button><span className="topbar-divider" /><span className="topbar-date">{new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date())}</span></div></header>
-      {demoMode ? <div className="demo-banner" role="status"><strong>Demo preview</strong><span>Label OCR runs in this browser; saved demo rows are temporary and never reach Firebase.</span><button type="button" onClick={() => void onLogout()}>Exit demo</button></div> : null}
+      {demoMode ? <div className="demo-banner" role="status"><strong>Demo preview</strong><span>Label OCR runs in this browser; saved demo rows are temporary and never reach Supabase.</span><button type="button" onClick={() => void onLogout()}>Exit demo</button></div> : null}
       <section className="page-heading"><div><span className="eyebrow">PARCEL DESK / {demoMode ? "DEMO PREVIEW" : "OPERATIONS"}</span><h1>{pageInfo.title}</h1><p>{pageInfo.subtitle}</p></div></section>
       {!demoMode && profile.role === "client" ? <div className="client-readonly-banner" role="status">View-only client access · contact your administrator to correct order or payment details.</div> : null}
       {error ? <div className="global-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError("")} aria-label="Dismiss error"><X size={15} /></button></div> : null}

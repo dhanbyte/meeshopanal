@@ -36,18 +36,35 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-The app uses Supabase Auth and Supabase tables as the active backend. This deployment is configured as a fresh start: old Firebase records are not imported, and clients/orders should be created again in the panel.
+The browser uses only the Supabase URL and public anon key. Never put a service-role key in a `VITE_` variable or in this file.
+
+If Supabase is not configured, the app offers an offline demo login: `admin@gmail.com` / `admin123`. It opens the temporary sample workspace only. The demo credentials do not create or access Supabase accounts or live records. Configure Supabase before using the app for real client orders, returns, or wallet payments.
+
+## Supabase database setup
+
+The base database schema and Row Level Security rules are in `supabase/migrations/20261114000000_parcel_desk_core.sql`. In the Supabase Dashboard, open **SQL Editor**, paste that file, and run it once. It creates the client, shipment, return, wallet ledger, profile and staff-assignment tables; private label/return storage buckets; and database functions that keep order, return and wallet updates transactional.
+
+Create the first admin in **Authentication → Users**, then add its profile in SQL Editor using the real Auth user ID:
+
+```sql
+insert into public.profiles (id, role, active, name)
+values ('AUTH_USER_UUID', 'admin', true, 'Workspace Admin')
+on conflict (id) do update set role = 'admin', active = true;
+```
+
+Client logins are created from a client record in the app. The `admin-client-login` Edge Function links that Auth user to the client profile. From this folder, sign in to the Supabase CLI, link your project, then deploy it:
+
+```sh
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase functions deploy admin-client-login
+```
+
+Configure `SUPABASE_SERVICE_ROLE_KEY` only as an Edge Function secret. Staff profiles and their client assignments belong in `profiles` and `staff_client_access`.
+
+This is a clean Supabase start; old Firebase records are not imported. Keep an export of any existing records before switching the live workspace.
 
 Client login creation and password resets use the `supabase/functions/admin-client-login` Edge Function. Deploy it with `supabase functions deploy admin-client-login`; its service-role key must remain a server-side secret. The function confirms managed client accounts automatically, so clients can sign in without waiting for an email confirmation. Client deletion is a soft delete (`active=false`) so its orders and ledger history remain available.
-
-## Default admin login
-
-For local fallback testing, the app recognizes:
-
-- email: `admin@gmail.com`
-- password: `admin123`
-
-This is meant for quick access and local testing, not as the production auth path.
 
 ## Build verification
 
@@ -72,9 +89,9 @@ This repository is already connected to GitHub and the project files are include
 
 ## Notes
 
-- The app is currently configured around Supabase rather than Firebase for production auth/data flow.
+- Supabase Auth, database functions, RLS and private Storage are the active auth/data path.
 - Client login credentials must be linked to a real Supabase Auth user for second-device or shared-client access to work reliably.
-- The codebase includes legacy compatibility for older local workspace data and migration helpers, but the active path is Supabase-first.
+- Wallet entries are posted through a database function, so each ledger entry and balance update commit together. Corrections preserve the original history.
 
 ## Repository
 

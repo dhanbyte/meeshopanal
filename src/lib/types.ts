@@ -79,7 +79,7 @@ export interface Shipment {
   labelUrl?: string;
   labelPath?: string;
   labelFileId?: string;
-  labelProvider?: "firebase" | "imagekit";
+  labelProvider?: "firebase" | "imagekit" | "supabase";
   createdBy: string;
   createdAt?: StoredDate;
   updatedAt?: StoredDate;
@@ -91,7 +91,8 @@ export interface EvidenceFile {
   name: string;
   url?: string;
   path: string;
-  provider?: "firebase" | "imagekit";
+  provider?: "firebase" | "imagekit" | "supabase";
+  bucket?: "labels" | "return-evidence";
   fileId?: string;
   contentType: string;
   size: number;

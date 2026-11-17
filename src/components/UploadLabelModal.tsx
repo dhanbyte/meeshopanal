@@ -1,6 +1,6 @@
 import { Check, FileText, LoaderCircle, Pencil, Trash2, UploadCloud, X } from "lucide-react";
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { createShipment, findProductPriceDefault, IMAGEKIT_UPLOAD_ENABLED, isSamePricedProduct, newShipmentId, normalizeAwb, productPriceDefaultKey, saveProductPriceDefault } from "../lib/data";
+import { createShipment, findProductPriceDefault, PRIVATE_STORAGE_ENABLED, isSamePricedProduct, newShipmentId, normalizeAwb, productPriceDefaultKey, saveProductPriceDefault } from "../lib/data";
 import type { Client, LabelDraft, ProductPriceDefault, Shipment, ShipmentItem, UserProfile } from "../lib/types";
 
 interface UploadLabelModalProps {
@@ -225,7 +225,7 @@ export function UploadLabelModal({ clients, profile, demoMode = false, existingA
       setSuccess(true);
       const notices = [
         localOnlyPrice ? "Product prices are remembered on this browser only because Firestore sync is blocked." : "",
-        !IMAGEKIT_UPLOAD_ENABLED ? "Shipment rows saved; label files were not stored while ImageKit setup is on hold." : "",
+        !PRIVATE_STORAGE_ENABLED ? "Shipment rows saved; private label storage is not configured." : "",
       ].filter(Boolean);
       setPriceWarning(notices.join(" "));
       window.setTimeout(onClose, notices.length ? 5000 : 1200);

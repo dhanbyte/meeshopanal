@@ -1,0 +1,7 @@
+project_id = "parcel-desk"
+
+[functions.admin-client-login]
+verify_jwt = true
+
+[functions.admin-delete-ledger-entry]
+verify_jwt = true
